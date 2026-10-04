@@ -2,7 +2,7 @@
 //   node tools/feel.ts [tier] [fights]
 import { ARCHETYPES, makeBuild } from '../src/career/builds.ts';
 import { arenaOf } from '../src/data/arenas.ts';
-import { Driver, skillFor } from '../src/sim/ai.ts';
+import { Driver } from '../src/sim/ai.ts';
 import { mulberry32 } from '../src/sim/rng.ts';
 import { computeStats } from '../src/sim/stats.ts';
 import { DT, World } from '../src/sim/world.ts';
@@ -17,7 +17,7 @@ for (const A of ARCHETYPES) {
     const rng = mulberry32(500 + k * 17);
     const B = ARCHETYPES[(k * 5 + 3) % ARCHETYPES.length];
     const w = new World(computeStats(makeBuild(A, tier, rng, { quality: 0.9 })), computeStats(makeBuild(B, tier, rng, { quality: 0.9 })), arenaOf('garage'), { seed: k });
-    const d = [new Driver(w, 0, skillFor(tier), k), new Driver(w, 1, skillFor(tier), k + 9)];
+    const d = [new Driver(w, 0, k), new Driver(w, 1, k + 9)];
     while (!w.over) {
       d[0].update(DT);
       d[1].update(DT);

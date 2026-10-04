@@ -3,7 +3,7 @@
 // Saved to localStorage after every change.
 
 import { ALL_PARTS, MAX_LEVEL, part, upgradeCost } from '../data/parts.ts';
-import type { BotDesign, PartDef, Wear } from '../data/types.ts';
+import { DEFAULT_PLAN, type BotDesign, type PartDef, type Wear } from '../data/types.ts';
 import { tierOf } from '../data/events.ts';
 import { autoPower, type Levels } from '../sim/stats.ts';
 import { freshWear } from '../sim/world.ts';
@@ -77,23 +77,23 @@ export interface Kit {
   design: Omit<BotDesign, 'id' | 'name' | 'paint' | 'power'>;
 }
 
-const BASE = ['ch_scrapbox', 'dr_twin', 'co_lead', 'ar_alu'];
+const BASE = ['ch_scrapbox', 'dr_twin', 'co_lead', 'ar_alu', 'br_relay'];
 
 export const KITS: Kit[] = [
   {
     id: 'spinner', name: 'Spinner', blurb: 'A toothed drum on a steel box. Hits hard and pops robots into the air.',
     parts: [...BASE, 'wp_drum'],
-    design: { chassis: 'ch_scrapbox', drive: 'dr_twin', core: 'co_lead', front: 'wp_drum', top: null, armor: { material: 'ar_alu', front: 3, sides: 3, rear: 2, top: 1 }, modules: [] },
+    design: { chassis: 'ch_scrapbox', drive: 'dr_twin', core: 'co_lead', front: 'wp_drum', top: null, armor: { material: 'ar_alu', front: 3, sides: 3, rear: 2, top: 1 }, modules: [], brain: 'br_relay', plan: { stance: 'aggressive', approach: 'direct', hazards: false } },
   },
   {
     id: 'control', name: 'Control', blurb: 'A wedge frame with a spring flipper. Get under them and throw them over.',
     parts: [...BASE, 'ch_ramprat', 'wp_springflip'],
-    design: { chassis: 'ch_ramprat', drive: 'dr_twin', core: 'co_lead', front: 'wp_springflip', top: null, armor: { material: 'ar_alu', front: 4, sides: 3, rear: 2, top: 2 }, modules: [] },
+    design: { chassis: 'ch_ramprat', drive: 'dr_twin', core: 'co_lead', front: 'wp_springflip', top: null, armor: { material: 'ar_alu', front: 4, sides: 3, rear: 2, top: 2 }, modules: [], brain: 'br_relay', plan: { stance: 'aggressive', approach: 'flank', hazards: true } },
   },
   {
     id: 'brawler', name: 'Brawler', blurb: 'A plow to pin them and a sledgehammer to finish them off.',
     parts: [...BASE, 'wp_plow', 'wp_sledge'],
-    design: { chassis: 'ch_scrapbox', drive: 'dr_twin', core: 'co_lead', front: 'wp_plow', top: 'wp_sledge', armor: { material: 'ar_alu', front: 3, sides: 2, rear: 1, top: 1 }, modules: [] },
+    design: { chassis: 'ch_scrapbox', drive: 'dr_twin', core: 'co_lead', front: 'wp_plow', top: 'wp_sledge', armor: { material: 'ar_alu', front: 3, sides: 2, rear: 1, top: 1 }, modules: [], brain: 'br_relay', plan: { stance: 'balanced', approach: 'direct', hazards: true } },
   },
 ];
 
@@ -105,7 +105,7 @@ export function newCareer(team: string, kitId: string, botName: string, paint: B
   const kit = KITS.find((k) => k.id === kitId) ?? KITS[0];
   const owned: Record<string, number> = {};
   for (const p of kit.parts) owned[p] = 1;
-  const bot: BotDesign = { ...structuredClone(kit.design), id: newId(), name: botName || 'Rookie', paint, power: { drive: 1, front: 1, top: 1, aux: 1 } };
+  const bot: BotDesign = { ...structuredClone(kit.design), id: newId(), name: botName || 'Rookie', paint, power: { drive: 1, front: 1, top: 1, aux: 1, brain: 1 } };
   bot.power = autoPower(bot);
   return {
     v: 1,
@@ -151,6 +151,10 @@ export function loadCareer(): Career | null {
     if (!c || c.v !== 1 || !Array.isArray(c.bots)) return null;
     // drop anything that no longer exists in the catalogue
     for (const id of Object.keys(c.owned)) if (!ALL_PARTS.some((p) => p.id === id)) delete c.owned[id];
+    // robots from before brains: the starter board and a balanced plan
+    c.owned.br_relay ??= 1;
+    const designs = [...c.bots, ...(c.tournament?.entrants.map((e) => e.bot) ?? [])];
+    for (const d of designs) upgradeDesign(d);
     c.seen ??= [];
     c.best ??= {};
     c.rivals ??= {};
@@ -158,6 +162,13 @@ export function loadCareer(): Career | null {
   } catch {
     return null;
   }
+}
+
+/** Bring a saved design up to date with the current shape of a robot. */
+export function upgradeDesign(d: BotDesign) {
+  if (!d.brain || !ALL_PARTS.some((p) => p.id === d.brain)) d.brain = 'br_relay';
+  d.plan = { ...DEFAULT_PLAN, ...(d.plan ?? {}) };
+  d.power.brain ??= 1;
 }
 
 // ---- parts -------------------------------------------------------------------

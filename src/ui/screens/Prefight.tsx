@@ -1,16 +1,16 @@
 import { useEffect } from 'preact/hooks';
 import { CREW_PCT, crewPatch, damageOf, fullRepair, levels, repairCost, wearOf } from '../../career/career.ts';
 import { RIVALS, flag } from '../../career/names.ts';
-import { nextPlayerMatch, opponentOf, type Entrant } from '../../career/tournament.ts';
+import { entrantLevels, nextPlayerMatch, opponentOf, type Entrant } from '../../career/tournament.ts';
 import { eventOf } from '../../data/events.ts';
 import { WEAPON_FAMILY, weaponOf } from '../../data/parts.ts';
 import type { BotDesign, Wear } from '../../data/types.ts';
 import { computeStats, readout, validate } from '../../sim/stats.ts';
 import { sfx } from '../../audio/sfx.ts';
-import { BotThumb, Btn, Stars, Stat, TopBar, fmtMoney } from '../components.tsx';
+import { BotThumb, Btn, Stat, TopBar, fmtMoney } from '../components.tsx';
 import { Icon } from '../icons.tsx';
 import { app, go, toast, update, useApp } from '../store.ts';
-import { PowerTab } from './Garage.tsx';
+import { PlanTab, PowerTab, TRAIT_TEXT } from './Garage.tsx';
 
 /** A line of advice for facing a robot with this main weapon. */
 export function scoutAdvice(op: BotDesign): string[] {
@@ -55,6 +55,9 @@ export function scoutAdvice(op: BotDesign): string[] {
     default:
       out.push('A pusher: it wins on control and the hazards. Keep away from the walls and hit it hard.');
   }
+  if (s.mind.trait) out.push(`Its brain is ${TRAIT_TEXT[s.mind.trait].charAt(0).toLowerCase()}${TRAIT_TEXT[s.mind.trait].slice(1)}`);
+  if (s.mind.plan.stance === 'aggressive') out.push('Told to be aggressive: it will come at you with a half-ready weapon.');
+  else if (s.mind.plan.approach === 'counter') out.push('It plays the counter: it waits for you to commit, then strikes.');
   if (!s.invertible && s.selfRight <= 0) out.push('It cannot self-right: flip it over and it is counted out.');
   if (s.armorMax.top < 60) out.push('Its top armour is thin.');
   if (s.mass < 85) out.push(`Light at ${s.mass.toFixed(0)} kg: easy to throw and push around.`);
@@ -76,7 +79,7 @@ function WearView({ w }: { w: Wear }) {
 
 export function ScoutCard({ op, label }: { op: Entrant; label?: string }) {
   const rv = op.rival ? RIVALS.find((r) => r.id === op.rival) : null;
-  const ro = readout(op.bot);
+  const ro = readout(op.bot, entrantLevels(op));
   const weapons = [op.bot.front, op.bot.top].filter((x): x is string => !!x).map((id) => weaponOf(id));
   return (
     <div class="card" style={{ borderColor: 'rgba(255,59,48,0.35)' }}>
@@ -93,7 +96,11 @@ export function ScoutCard({ op, label }: { op: Entrant; label?: string }) {
             {flag(op.country)} {op.team}
           </div>
           <div class="row small" style={{ gap: '6px' }}>
-            Driver <Stars value={Math.round(op.skill.aim * 5)} />
+            <Icon name="brain" size={14} style={{ color: 'var(--cyan)' }} /> {ro.brain}
+            {(op.mk ?? 1) > 1 && <span class="badge gold">Mk {op.mk}</span>}
+          </div>
+          <div class="tiny muted" style={{ textTransform: 'capitalize' }}>
+            {op.bot.plan.stance} · {op.bot.plan.approach === 'direct' ? 'head-on' : op.bot.plan.approach} · {op.bot.plan.hazards ? 'uses hazards' : 'avoids hazards'}
           </div>
         </div>
       </div>
@@ -185,6 +192,8 @@ export function Prefight() {
             </Btn>
           )}
         </div>
+        <div class="section-title">Battle plan</div>
+        <PlanTab bot={bot} />
         <div class="section-title">Power for this fight</div>
         <PowerTab c={c} bot={bot} />
         <div style={{ height: '10px' }} />

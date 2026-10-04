@@ -6,9 +6,9 @@ import { ARENAS, arenaOf } from '../src/data/arenas.ts';
 import { EVENTS, FORMAT_FIGHTS } from '../src/data/events.ts';
 import { ALL_PARTS, part, weaponOf } from '../src/data/parts.ts';
 import { WEIGHT_LIMIT } from '../src/data/types.ts';
-import { Driver, skillFor } from '../src/sim/ai.ts';
+import { Driver, REBOOT_TIME } from '../src/sim/ai.ts';
 import { mulberry32 } from '../src/sim/rng.ts';
-import { computeStats, designWeight, isLegal, powerDraw, coreOutput, autoPower } from '../src/sim/stats.ts';
+import { computeStats, designWeight, isLegal, powerDraw, coreOutput, autoPower, validate } from '../src/sim/stats.ts';
 import { DT, FIGHT_TIME, World, freshWear, type FightResult } from '../src/sim/world.ts';
 
 function fight(seed: number, a = 'disc', b = 'wedge', tier = 3, arena = 'crucible'): FightResult {
@@ -17,7 +17,7 @@ function fight(seed: number, a = 'disc', b = 'wedge', tier = 3, arena = 'crucibl
   const db = makeBuild(ARCHETYPES.find((x) => x.id === b)!, tier, rng);
   const w = new World(computeStats(da), computeStats(db), arenaOf(arena), { seed });
   w.quiet = true;
-  const d = [new Driver(w, 0, skillFor(tier), seed), new Driver(w, 1, skillFor(tier), seed + 1)];
+  const d = [new Driver(w, 0, seed), new Driver(w, 1, seed + 1)];
   let n = 0;
   while (!w.over && n < 20000) {
     d[0].update(DT);
@@ -77,9 +77,13 @@ describe('parts and designs', () => {
 
   it('auto power never overloads the core', () => {
     const d = makeBuild(ARCHETYPES[0], 5, mulberry32(3));
-    d.core = 'co_lead';
     d.power = autoPower(d);
     expect(powerDraw(d)).toBeLessThanOrEqual(coreOutput(d) + 1e-9);
+    // a core far too small: the weapons go off before anything is overloaded,
+    // and if even the drive and brain cannot run the design is flagged
+    d.core = 'co_lead';
+    d.power = autoPower(d);
+    expect(powerDraw(d) <= coreOutput(d) + 1e-9 || validate(d).some((i) => /cannot keep it all running/.test(i.text))).toBe(true);
   });
 });
 
@@ -145,21 +149,72 @@ describe('tournaments', () => {
   });
 });
 
-describe('thumbstick driving', () => {
-  it('turns toward the stick and drives, reverses when it points behind', async () => {
-    const { ManualDriver } = await import('../src/sim/manual.ts');
-    const rng = mulberry32(9);
-    const d = makeBuild(ARCHETYPES[0], 2, rng);
-    const w = new World(computeStats(d), computeStats(d), arenaOf('garage'), { seed: 1 });
-    const me = w.bots[0]; // starts facing north (up the screen)
-    const md = new ManualDriver();
-    md.apply(me, w.bots[1], 0, 1, false); // stick up: straight ahead
-    expect(me.ctl.throttle).toBeGreaterThan(0.9);
-    expect(Math.abs(me.ctl.turn)).toBeLessThan(0.05);
-    md.apply(me, w.bots[1], 0, -1, false); // stick down: back up
-    expect(me.ctl.throttle).toBeLessThan(-0.5);
-    const md2 = new ManualDriver();
-    md2.apply(me, w.bots[1], -1, 0, false); // stick left: turn left (counter-clockwise)
-    expect(me.ctl.turn).toBeGreaterThan(0.5);
+describe('brains and power', () => {
+  const arch = (id: string) => ARCHETYPES.find((x) => x.id === id)!;
+
+  it('switches off a weapon below its minimum power', () => {
+    const d = makeBuild(arch('drum'), 3, mulberry32(4));
+    d.power.front = 0.2;
+    expect(computeStats(d).front!.p).toBe(0);
+    expect(validate(d).some((i) => i.level === 'warn' && /switched off/.test(i.text))).toBe(true);
+    d.power.front = 1;
+    expect(computeStats(d).front!.p).toBe(1);
+  });
+
+  it('will not pass a core that cannot keep every part at its minimum', () => {
+    const d = makeBuild(arch('disc'), 5, mulberry32(5));
+    d.core = 'co_lead';
+    d.brain = 'br_overmind';
+    d.power = { drive: 1, front: 1, top: 1, aux: 1, brain: 1 };
+    expect(validate(d).some((i) => i.level === 'error' && /cannot keep it all running/.test(i.text))).toBe(true);
+    // auto power gets it running by switching the weapon off, and says so
+    d.power = autoPower(d);
+    expect(d.power.front).toBe(0);
+    expect(validate(d).some((i) => /switched off/.test(i.text))).toBe(true);
+  });
+
+  it('a starved brain reboots and freezes the robot for a moment', () => {
+    const d = makeBuild(arch('drum'), 5, mulberry32(6));
+    d.brain = 'br_overmind';
+    d.power.brain = 0.4;
+    const w = new World(computeStats(d), computeStats(d), arenaOf('garage'), { seed: 3 });
+    const a = new Driver(w, 0, 1);
+    const b = new Driver(w, 1, 2);
+    let rebooted = false;
+    for (let i = 0; i < 240; i++) {
+      a.update(DT);
+      b.update(DT);
+      w.step();
+      if (w.events.some((e) => e.type === 'reboot' && e.bot === 0)) rebooted = true;
+      if (a.rebooting) expect(w.bots[0].ctl.throttle).toBe(0);
+      w.events.length = 0;
+    }
+    expect(rebooted).toBe(true);
+    expect(REBOOT_TIME).toBeGreaterThan(0.3);
+  });
+
+  it('a sharper brain wins more often in a mirror match', () => {
+    let sharp = 0;
+    const N = 16;
+    for (let k = 0; k < N; k++) {
+      const d = makeBuild(arch(k % 2 ? 'drum' : 'hammer'), 5, mulberry32(100 + k));
+      d.brain = 'br_overmind';
+      d.power = autoPower(d);
+      const dull = structuredClone(d);
+      dull.brain = 'br_relay';
+      const swap = k % 4 >= 2;
+      const w = new World(computeStats(swap ? dull : d), computeStats(swap ? d : dull), arenaOf('steelpit'), { seed: k + 1 });
+      w.quiet = true;
+      const drivers = [new Driver(w, 0, k), new Driver(w, 1, k + 7)];
+      let n = 0;
+      while (!w.over && n < 14000) {
+        drivers[0].update(DT);
+        drivers[1].update(DT);
+        w.step();
+        n++;
+      }
+      if (w.result!.winner === (swap ? 1 : 0)) sharp++;
+    }
+    expect(sharp / N).toBeGreaterThan(0.6);
   });
 });

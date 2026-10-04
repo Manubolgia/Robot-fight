@@ -1,7 +1,7 @@
 {
   "name": "Kilowatt: Robot Combat League",
   "short_name": "Kilowatt",
-  "description": "Design combat robots inside a weight and power budget, then fight your way from the garage to the World Cup.",
+  "description": "Design combat robots inside a weight and power budget, give them a brain and a battle plan, and watch them fight from the garage to the World Cup.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

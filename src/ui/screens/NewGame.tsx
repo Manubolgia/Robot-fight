@@ -48,7 +48,7 @@ export function NewGame() {
   const [paint, setPaint] = useState<Paint>({ primary: '#ffb000', secondary: '#141414', pattern: 'hazard' });
   const preview: BotDesign = useMemo(() => {
     const k = KITS.find((x) => x.id === kit)!;
-    const d: BotDesign = { ...structuredClone(k.design), id: 'preview', name: botName, paint, power: { drive: 1, front: 1, top: 1, aux: 1 } };
+    const d: BotDesign = { ...structuredClone(k.design), id: 'preview', name: botName, paint, power: { drive: 1, front: 1, top: 1, aux: 1, brain: 1 } };
     d.power = autoPower(d);
     return d;
   }, [kit, paint, botName]);

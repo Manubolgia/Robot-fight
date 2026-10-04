@@ -150,6 +150,13 @@ const P: Record<string, JSX.Element> = {
     </>
   ),
   brush: <path d="M19 3 9 13l2 2L21 5l-2-2ZM9 13c-3 0-4 2-4 4 0 1.5-1 2.5-2 3 3 1 7 .5 8-3l-2-4Z" />,
+  brain: (
+    <>
+      <path d="M12 4.6c-1.2-1.5-4.3-1.3-5.1 1-2 .2-3.2 2.4-2.3 4.2-1.4 1.2-1.3 3.7.3 4.6-.2 2.2 1.8 3.9 3.8 3.4.7 1.6 2.6 2 3.3.8V4.6Z" />
+      <path d="M12 4.6c1.2-1.5 4.3-1.3 5.1 1 2 .2 3.2 2.4 2.3 4.2 1.4 1.2 1.3 3.7-.3 4.6.2 2.2-1.8 3.9-3.8 3.4-.7 1.6-2.6 2-3.3.8" />
+      <path d="M7.8 9.6h2.2M14 12.6h2.6M8.4 14.6h1.6" />
+    </>
+  ),
   chip: (
     <>
       <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -243,5 +250,5 @@ const WEAPON_ICON: Record<string, string> = {
 
 export function partIcon(kind: string, type?: string): string {
   if (kind === 'weapon') return WEAPON_ICON[type ?? ''] ?? 'target';
-  return { chassis: 'frame', drive: 'wheel', core: 'battery', armor: 'shield', module: 'chip' }[kind] ?? 'gear';
+  return { chassis: 'frame', drive: 'wheel', core: 'battery', armor: 'shield', module: 'chip', brain: 'brain' }[kind] ?? 'gear';
 }

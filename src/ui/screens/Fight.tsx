@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { levels, type Career } from '../../career/career.ts';
 import { RIVALS, flag } from '../../career/names.ts';
-import { PLAYER, entrant, nextPlayerMatch, recordPlayerFight, type Entrant } from '../../career/tournament.ts';
+import { PLAYER, entrant, entrantLevels, nextPlayerMatch, recordPlayerFight, type Entrant } from '../../career/tournament.ts';
 import { arenaOf } from '../../data/arenas.ts';
 import { eventOf } from '../../data/events.ts';
 import type { BotDesign, Wear } from '../../data/types.ts';
-import { Driver, PILOT_SKILL } from '../../sim/ai.ts';
-import { ManualDriver } from '../../sim/manual.ts';
-import { computeStats, LEVEL_ONE } from '../../sim/stats.ts';
+import { Driver } from '../../sim/ai.ts';
+import { computeStats } from '../../sim/stats.ts';
 import { DT, World, type Bot, type FightResult, type SimEvent } from '../../sim/world.ts';
 import { sfx } from '../../audio/sfx.ts';
 import { canvasSize, getRenderer, mount, unmount } from '../../render/gfx.ts';
@@ -56,22 +55,24 @@ interface HudBot {
   name: string;
   hp: number;
   armor: number[];
-  weapon: string;
   hot: boolean;
   burning: boolean;
   down: string[];
   count: number;
+  /** what its brain is doing */
+  intent: string;
+  rebooting: boolean;
+  heat: number;
+  /** main weapon: spin energy or readiness, 0..1, -1 for none */
+  weapon: number;
 }
 
 interface Hud {
   t: number;
   bots: HudBot[];
-  heat: number;
-  ready: boolean;
-  topReady: boolean;
-  boost: number;
-  spin: number;
 }
+
+const SPEEDS = [1, 2, 4];
 
 type Phase = 'intro' | 'fight' | 'ending' | 'judges';
 
@@ -99,17 +100,13 @@ export function Fight() {
   const [banner, setBanner] = useState<{ text: string; sub?: string; cls?: string } | null>(null);
   const [count, setCount] = useState<{ bot: number; n: number } | null>(null);
   const [paused, setPaused] = useState(false);
-  const [auto, setAuto] = useState(false);
+  const [speed, setSpeed] = useState(1);
   const [judges, setJudges] = useState<FightResult | null>(null);
-  const [joy, setJoy] = useState<{ x: number; y: number; kx: number; ky: number } | null>(null);
-  const [pressed, setPressed] = useState({ fire: false, top: false, boost: false });
-  const ctl = useRef({ sx: 0, sy: 0, fire: false, top: false, boost: false, boostT: 0, keys: new Set<string>() });
   const state = useRef<{
     world: World;
     view: FightView;
-    pilot: Driver;
-    ai: Driver;
-    manual: ManualDriver;
+    drivers: [Driver, Driver];
+    speed: number;
     prev: Snap[];
     cur: Snap[];
     acc: number;
@@ -123,10 +120,8 @@ export function Fight() {
     endT: number;
     done: boolean;
     paused: boolean;
-    auto: boolean;
     lastCount: number[];
   } | null>(null);
-  const settings = app.settings;
 
   useEffect(() => {
     const s = setup.current;
@@ -136,7 +131,7 @@ export function Fight() {
     }
     const el = host.current!;
     const statsA = computeStats(s.me, s.levels);
-    const statsB = computeStats(s.op.bot, LEVEL_ONE);
+    const statsB = computeStats(s.op.bot, entrantLevels(s.op));
     const seed = Math.floor(Math.random() * 1e9);
     const world = new World(statsA, statsB, arenaOf(s.arena), { seed, wear: [s.wear, s.op.wear] });
     const view = new FightView(world, [s.me, s.op.bot]);
@@ -150,9 +145,8 @@ export function Fight() {
     const st = {
       world,
       view,
-      pilot: new Driver(world, 0, PILOT_SKILL, seed + 11),
-      ai: new Driver(world, 1, s.op.skill, seed + 3),
-      manual: new ManualDriver(),
+      drivers: [new Driver(world, 0, seed + 11), new Driver(world, 1, seed + 3)] as [Driver, Driver],
+      speed: 1,
       prev: world.bots.map(snap),
       cur: world.bots.map(snap),
       acc: 0,
@@ -166,7 +160,6 @@ export function Fight() {
       endT: 0,
       done: false,
       paused: false,
-      auto: false,
       lastCount: [0, 0],
     };
     state.current = st;
@@ -177,20 +170,14 @@ export function Fight() {
     setFrame(frame);
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
-      const down = e.type === 'keydown';
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'w', 'a', 's', 'd', 'e', 'shift'].includes(k)) e.preventDefault();
-      if (down) ctl.current.keys.add(k);
-      else ctl.current.keys.delete(k);
-      if (k === ' ') ctl.current.fire = down;
-      if (k === 'e') ctl.current.top = down;
-      if (k === 'shift' && down) {
-        ctl.current.boost = true;
-        ctl.current.boostT = 0.25;
+      if (k === 'escape' || k === ' ') {
+        e.preventDefault();
+        togglePause();
       }
-      if (k === 'escape' && down) togglePause();
+      if (k === '1' || k === '2' || k === '4') setPace(Number(k));
+      if (k === 's') skip();
     };
     window.addEventListener('keydown', onKey);
-    window.addEventListener('keyup', onKey);
     const onHide = () => {
       if (document.hidden && st.phase === 'fight') {
         st.paused = true;
@@ -201,7 +188,6 @@ export function Fight() {
     return () => {
       clearFrame(frame);
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('keyup', onKey);
       document.removeEventListener('visibilitychange', onHide);
       sfx.stopFight();
       unmount(el);
@@ -214,6 +200,36 @@ export function Fight() {
     if (!st || st.phase !== 'fight') return;
     st.paused = !st.paused;
     setPaused(st.paused);
+  }
+
+  function setPace(n: number) {
+    const st = state.current;
+    if (!st) return;
+    st.speed = n;
+    setSpeed(n);
+    sfx.click();
+  }
+
+  /** Play the rest of the fight out at once and go straight to the finish. */
+  function skip() {
+    const st = state.current;
+    if (!st || st.phase !== 'fight' || st.paused) return;
+    const w = st.world;
+    w.quiet = true;
+    let n = 0;
+    while (!w.over && n < 20000) {
+      st.drivers[0].update(DT);
+      st.drivers[1].update(DT);
+      w.step();
+      n++;
+    }
+    w.quiet = false;
+    w.events.length = 0;
+    st.prev = st.cur = w.bots.map(snap);
+    st.hitstop = 0;
+    st.acc = 0;
+    sfx.whoosh();
+    beginEnding();
   }
 
   function pushFeed(text: string, color?: string) {
@@ -320,6 +336,10 @@ export function Fight() {
         case 'boost':
           if (e.bot === 0) sfx.boost();
           break;
+        case 'reboot':
+          pushFeed(`${name(e.bot)} BRAIN REBOOTING!`, 'var(--cyan)');
+          sfx.beep(true);
+          break;
         case 'ko':
           sfx.ko();
           buzz(80);
@@ -340,23 +360,6 @@ export function Fight() {
     const w = st.world;
     const v = st.view;
     st.phaseT += dt;
-    // input
-    const k = ctl.current;
-    let sx = k.sx;
-    let sy = k.sy;
-    if (k.keys.size) {
-      const kx = (k.keys.has('d') || k.keys.has('arrowright') ? 1 : 0) - (k.keys.has('a') || k.keys.has('arrowleft') ? 1 : 0);
-      const ky = (k.keys.has('w') || k.keys.has('arrowup') ? 1 : 0) - (k.keys.has('s') || k.keys.has('arrowdown') ? 1 : 0);
-      if (kx || ky) {
-        const l = Math.hypot(kx, ky);
-        sx = kx / l;
-        sy = ky / l;
-      }
-    }
-    if (k.boostT > 0) {
-      k.boostT -= dt;
-      if (k.boostT <= 0) k.boost = false;
-    }
 
     if (st.phase === 'intro') {
       const t = st.phaseT;
@@ -379,33 +382,23 @@ export function Fight() {
     }
 
     const running = (st.phase === 'fight' || st.phase === 'ending') && !st.paused;
+    // the fast-forward only speeds the fight up, not the finish
+    const pace = st.phase === 'fight' ? st.speed : 1;
     if (running) {
-      let simDt = dt * st.slow;
+      let simDt = dt * st.slow * pace;
       if (st.hitstop > 0) {
         st.hitstop -= dt;
         simDt = 0;
       }
       st.acc += simDt;
       let steps = 0;
-      if (st.acc > 0.25 * DEV_SPEED) st.acc = 0.25 * DEV_SPEED;
-      while (st.acc >= DT && steps < 12 * DEV_SPEED) {
+      if (st.acc > 0.25 * DEV_SPEED * pace) st.acc = 0.25 * DEV_SPEED * pace;
+      while (st.acc >= DT && steps < 12 * DEV_SPEED * pace) {
         st.acc -= DT;
         steps++;
         st.prev = st.cur;
-        const me = w.bots[0];
-        if (st.auto) {
-          st.pilot.update(DT);
-          me.ctl.fire = me.ctl.fire || k.fire;
-          me.ctl.fireTop = me.ctl.fireTop || k.top;
-          me.ctl.boost = me.ctl.boost || k.boost;
-        } else {
-          st.manual.apply(me, w.bots[1], sx, sy, app.settings.assist);
-          me.auto = app.settings.autoFire;
-          me.ctl.fire = k.fire;
-          me.ctl.fireTop = k.top;
-          me.ctl.boost = k.boost;
-        }
-        st.ai.update(DT);
+        st.drivers[0].update(DT);
+        st.drivers[1].update(DT);
         w.step();
         st.cur = w.bots.map(snap);
         if (w.events.length) {
@@ -445,17 +438,9 @@ export function Fight() {
     st.hudT -= dt;
     if (st.hudT <= 0) {
       st.hudT = 1 / 15;
-      const me = w.bots[0];
-      const ws = me.front && me.front.w.def.type !== 'wedge' && me.front.w.def.type !== 'ram' ? me.front : me.top;
-      const topWs = me.top;
       setHud({
         t: Math.ceil(w.timeLeft),
-        bots: w.bots.map((b) => hudBot(b)),
-        heat: Math.min(1, me.heat / 100),
-        ready: !!ws && (ws.w.energyMax > 0 ? ws.energy > ws.w.energyMax * 0.6 : ws.reload <= 0 && !ws.holding),
-        topReady: !!topWs && topWs.reload <= 0,
-        boost: me.boostCd > 0 ? 1 - me.boostCd / (me.s.boostCooldown + 2) : 1,
-        spin: ws && ws.w.energyMax > 0 ? ws.energy / ws.w.energyMax : -1,
+        bots: w.bots.map((b, i) => hudBot(b, st.drivers[i])),
       });
       sfx.fightTick(
         w.bots.map((b) => {
@@ -483,24 +468,31 @@ export function Fight() {
   const countdownRef = useRef<string | null>(null);
   const judgesShown = useRef(false);
 
-  function hudBot(b: Bot): HudBot {
+  function hudBot(b: Bot, d: Driver): HudBot {
     const s = b.s;
     const zones = ['front', 'left', 'right', 'rear', 'top'] as const;
     const down: string[] = [];
     if (s.compHp.drive > 0 && b.comp.drive <= 0) down.push('DRIVE');
     if ((b.front && b.comp.front <= 0) || (b.top && b.comp.top <= 0)) down.push('WEAPON');
     if (b.comp.core <= 0) down.push('POWER');
+    const ws = b.front && !['wedge', 'ram'].includes(b.front.w.def.type) ? b.front : b.top;
+    const weapon = !ws || ws.w.p <= 0 && ws.w.def.power > 0 ? -1 : ws.w.energyMax > 0 ? ws.energy / ws.w.energyMax : ws.reload > 0 || ws.holding ? Math.max(0, 1 - ws.reload / Math.max(0.1, ws.w.reload)) : 1;
     return {
       name: s.name,
       hp: Math.max(0, b.hp / s.hpMax),
       armor: zones.map((z) => (s.armorMax[z] > 0 ? b.armor[z] / s.armorMax[z] : 0)),
-      weapon: '',
       hot: b.overheated,
       burning: b.burning > 0,
       down,
       count: b.immobileT,
+      intent: b.ko || b.inPit ? 'Out' : !st0().world.mobile(b) && !d.rebooting ? (b.inverted && !b.s.invertible ? 'On its back' : b.airborne ? 'Airborne' : 'Stuck') : d.intent,
+      rebooting: d.rebooting,
+      heat: Math.min(1, b.heat / 100),
+      weapon,
     };
   }
+
+  const st0 = () => state.current!;
 
   function beginEnding() {
     const st = state.current!;
@@ -534,67 +526,12 @@ export function Fight() {
     go('results', { outcome });
   }
 
-  function onJoyDown(e: PointerEvent) {
-    const el = e.currentTarget as HTMLElement;
-    el.setPointerCapture(e.pointerId);
-    const rect = el.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    joyRef.current = { id: e.pointerId, x, y };
-    setJoy({ x, y, kx: 0, ky: 0 });
-    sfx.unlock();
-  }
-
-  const joyRef = useRef<{ id: number; x: number; y: number } | null>(null);
-  function onJoyMove(e: PointerEvent) {
-    const j = joyRef.current;
-    if (!j || j.id !== e.pointerId) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    let dx = e.clientX - rect.left - j.x;
-    let dy = e.clientY - rect.top - j.y;
-    const R = 54;
-    const l = Math.hypot(dx, dy);
-    if (l > R) {
-      // drag the base along so the stick never runs out
-      const over = l - R;
-      j.x += (dx / l) * over;
-      j.y += (dy / l) * over;
-      dx = (dx / l) * R;
-      dy = (dy / l) * R;
-    }
-    ctl.current.sx = dx / R;
-    ctl.current.sy = -dy / R;
-    setJoy({ x: j.x, y: j.y, kx: dx, ky: dy });
-  }
-
-  function onJoyUp(e: PointerEvent) {
-    const j = joyRef.current;
-    if (!j || j.id !== e.pointerId) return;
-    joyRef.current = null;
-    ctl.current.sx = 0;
-    ctl.current.sy = 0;
-    setJoy(null);
-  }
-
-  const press = (key: 'fire' | 'top' | 'boost', on: boolean) => {
-    if (key === 'boost') {
-      if (on) {
-        ctl.current.boost = true;
-        ctl.current.boostT = 0.25;
-      }
-    } else ctl.current[key] = on;
-    setPressed((p) => ({ ...p, [key]: on }));
-    if (on) buzz(10);
-  };
-
   const s = setup.current;
   if (!s) return null;
   const me = s.me;
-  const meStats = state.current?.world.bots[0].s;
-  const hasActive = !!meStats && ((meStats.front && !['wedge', 'ram'].includes(meStats.front.def.type)) || false);
-  const hasTop = !!meStats?.top;
   const rv = s.op.rival ? RIVALS.find((r) => r.id === s.op.rival) : null;
   const H = hud;
+  const brains = state.current?.world.bots.map((b) => b.s.brain.name) ?? ['', ''];
 
   return (
     <div class="screen fight" style={{ animation: 'none' }}>
@@ -618,6 +555,7 @@ export function Fight() {
                       </b>
                     ))}
                   </div>
+                  <div class={`intent ${b.rebooting ? 'reboot' : ''}`}>{b.intent}</div>
                   <div class="icons">
                     {b.hot && <span class="hot">HOT</span>}
                     {b.burning && <span class="hot">FIRE</span>}
@@ -663,7 +601,9 @@ export function Fight() {
                 <div class="display" style={{ fontSize: '20px' }}>
                   {me.name}
                 </div>
-                <div class="small muted">{app.career?.team ?? 'You'}</div>
+                <div class="small muted">
+                  {app.career?.team ?? 'You'} · {brains[0]}
+                </div>
               </div>
             </div>
             <div class="intro-card red">
@@ -676,7 +616,7 @@ export function Fight() {
                   {s.op.bot.name}
                 </div>
                 <div class="small muted">
-                  {flag(s.op.country)} {rv ? `${rv.driver} · ${rv.team}` : s.op.team}
+                  {flag(s.op.country)} {rv ? rv.team : s.op.team} · {brains[1]}
                 </div>
               </div>
             </div>
@@ -696,77 +636,30 @@ export function Fight() {
             <button class="hud-btn" aria-label="Pause" onClick={() => togglePause()}>
               <Icon name="pause" size={18} />
             </button>
-            <button
-              class={`hud-btn ${auto ? 'on' : ''}`}
-              aria-label="Autopilot"
-              onClick={() => {
-                const st = state.current;
-                if (!st) return;
-                st.auto = !st.auto;
-                setAuto(st.auto);
-                sfx.click();
-              }}
-            >
-              AUTO
-            </button>
           </div>
         )}
-        {phase !== 'judges' && phase !== 'ending' && (
-          <div class={`controls ${settings.lefty ? 'lefty' : ''}`}>
-            <div class="joy-zone" onPointerDown={onJoyDown} onPointerMove={onJoyMove} onPointerUp={onJoyUp} onPointerCancel={onJoyUp}>
-              <div
-                class={`joy ${joy ? '' : 'idle'}`}
-                style={{ left: `${joy ? joy.x : 96}px`, top: `${joy ? joy.y : 120}px` }}
-              >
-                {!joy && <div class="hint">DRIVE</div>}
-                <div class="knob" style={{ transform: `translate(${joy?.kx ?? 0}px, ${joy?.ky ?? 0}px)` }} />
+        {phase !== 'judges' && phase !== 'ending' && H && (
+          <div class="spectate">
+            <div class="mine">
+              <span class="lbl">Heat</span>
+              <div class="bar">
+                <i style={{ width: `${H.bots[0].heat * 100}%` }} />
+              </div>
+              <span class="lbl">{H.bots[0].weapon < 0 ? 'No weapon' : 'Weapon'}</span>
+              <div class="bar weapon">
+                <i style={{ width: `${Math.max(0, H.bots[0].weapon) * 100}%` }} />
               </div>
             </div>
-            {H && (
-              <div class="heatbar">
-                <span>HEAT</span>
-                <div class="bar">
-                  <i style={{ width: `${H.heat * 100}%` }} />
-                </div>
+            <div class="row" style={{ gap: '8px' }}>
+              <div class="seg grow">
+                {SPEEDS.map((n) => (
+                  <button key={n} class={speed === n ? 'on' : ''} onClick={() => setPace(n)}>
+                    {n}×
+                  </button>
+                ))}
               </div>
-            )}
-            <div class="pad">
-              <button
-                class={`fbtn main ${pressed.fire ? 'pressed' : ''} ${H?.ready ? 'ready' : ''} ${!hasActive && H?.spin === -1 ? 'off' : ''}`}
-                onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); press('fire', true); }}
-                onPointerUp={() => press('fire', false)}
-                onPointerCancel={() => press('fire', false)}
-              >
-                {H && H.spin >= 0 && (
-                  <svg class="ring" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="6" />
-                    <circle cx="50" cy="50" r="46" fill="none" stroke="#ffd23f" stroke-width="6" stroke-dasharray={`${H.spin * 289} 289`} transform="rotate(-90 50 50)" stroke-linecap="round" />
-                  </svg>
-                )}
-                <span class="lbl">{H && H.spin >= 0 ? 'SPIN' : 'FIRE'}</span>
-              </button>
-              {hasTop && (
-                <button
-                  class={`fbtn top ${pressed.top ? 'pressed' : ''}`}
-                  onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); press('top', true); }}
-                  onPointerUp={() => press('top', false)}
-                  onPointerCancel={() => press('top', false)}
-                >
-                  <span class="lbl">TOP</span>
-                </button>
-              )}
-              <button
-                class={`fbtn boost ${pressed.boost ? 'pressed' : ''} ${H && H.boost < 1 ? 'off' : ''}`}
-                onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); press('boost', true); }}
-                onPointerUp={() => press('boost', false)}
-                onPointerCancel={() => press('boost', false)}
-              >
-                {H && H.boost < 1 && (
-                  <svg class="ring" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="46" fill="none" stroke="#2ee6ff" stroke-width="6" stroke-dasharray={`${H.boost * 289} 289`} transform="rotate(-90 50 50)" />
-                  </svg>
-                )}
-                <span class="lbl">BOOST</span>
+              <button class="skip" disabled={phase !== 'fight'} onClick={() => skip()}>
+                Skip <Icon name="next" size={16} />
               </button>
             </div>
           </div>
@@ -779,7 +672,7 @@ export function Fight() {
             <div class="display center" style={{ fontSize: '26px' }}>
               Paused
             </div>
-            <div class="small muted center">Drive with the left thumb, fire with the right. AUTO lets your pit crew drive.</div>
+            <div class="small muted center">Your robot fights on its own: its brain and battle plan decide every move. Change them in the pit between fights.</div>
             <Btn kind="primary" wide onClick={() => togglePause()}>
               Resume
             </Btn>

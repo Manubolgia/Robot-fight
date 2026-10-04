@@ -2,10 +2,10 @@
 // the numbers the fight runs on, and the numbers the garage shows.
 
 import {
-  armorOf, chassisOf, coreOf, driveOf, levelMult, moduleOf, weaponOf, WEAPON_FAMILY,
+  armorOf, brainOf, chassisOf, coreOf, driveOf, levelMult, minPowerOf, moduleOf, weaponOf, WEAPON_FAMILY,
 } from '../data/parts.ts';
 import type {
-  ArmorDef, BotDesign, ChassisDef, CoreDef, DmgType, DriveDef, HitZone, ModuleEffect, Paint, PowerSplit, WeaponDef,
+  ArmorDef, BattlePlan, BotDesign, BrainDef, BrainTrait, ChassisDef, CoreDef, DmgType, DriveDef, HitZone, ModuleEffect, Paint, PowerSplit, WeaponDef,
 } from '../data/types.ts';
 import { ARMOR_ZONES, WEIGHT_LIMIT } from '../data/types.ts';
 
@@ -18,7 +18,6 @@ export const DMG_PER_KJ = 3.6;
 export const SPIN_EFF = 1.2;
 /** heat per second per overvolted kW while a system is working */
 export const OVERVOLT_HEAT = 5;
-export const MIN_DRIVE_POWER = 0.3;
 
 /**
  * Per weapon damage trim, set by the balance runs (tools/tune.ts): each tier
@@ -27,18 +26,18 @@ export const MIN_DRIVE_POWER = 0.3;
  * flippers and lifters the trim also scales the throw (by its square root).
  */
 export const TUNE: Record<string, number> = {
-  wp_drum: 0.96, wp_megadrum: 0.96,
-  wp_bar: 1.32, wp_undercutter: 1.32,
-  wp_disc: 0.97, wp_egg: 0.97, wp_megadisc: 0.97,
-  wp_ring: 2.25,
-  wp_springflip: 1, wp_pneuflip: 1, wp_megaflip: 1, wp_launcher: 1,
-  wp_lifter: 1, wp_clamp: 1,
-  wp_sledge: 0.38, wp_pickaxe: 0.38, wp_thwack: 0.38, wp_pulverizer: 0.38, wp_titanhammer: 0.38,
-  wp_jaw: 0.69, wp_megajaw: 0.69,
-  wp_buzzsaw: 1.47, wp_twinsaw: 1.47,
-  wp_plow: 1.28, wp_forks: 1.28,
-  wp_spikes: 4.15, wp_lance: 4.15, wp_battering: 4.15,
-  wp_flame: 0.6, wp_inferno: 0.6,
+  wp_drum: 0.88, wp_twindrum: 0.76, wp_megadrum: 0.82,
+  wp_bar: 0.84, wp_tribar: 1.1, wp_undercutter: 1.36,
+  wp_disc: 0.69, wp_egg: 1.14, wp_megadisc: 0.58,
+  wp_ring: 2.09, wp_halo: 2.11,
+  wp_springflip: 2.68, wp_pneuflip: 1.52, wp_megaflip: 0.68, wp_launcher: 0.62,
+  wp_lifter: 3, wp_clamp: 0.78, wp_hydrofork: 0.65,
+  wp_sledge: 0.66, wp_pickaxe: 0.45, wp_thwack: 0.45, wp_pulverizer: 0.45, wp_titanhammer: 0.4,
+  wp_jaw: 0.81, wp_megajaw: 1.27,
+  wp_buzzsaw: 0.81, wp_twinsaw: 2.64, wp_armsaw: 0.38,
+  wp_plow: 1.3, wp_forks: 1.6, wp_plough: 1.6,
+  wp_spikes: 3.04, wp_lance: 3.52, wp_ramhead: 5, wp_battering: 2.91,
+  wp_flame: 0.29, wp_inferno: 0.25,
 };
 export const trimOf = (w: WeaponDef) => TUNE[w.id] ?? 1;
 export const MAX_POWER = 1.3;
@@ -72,6 +71,21 @@ export interface WeaponStats {
   overvoltHeat: number;
 }
 
+/** What the brain brings to a fight, after upgrades, with its orders. */
+export interface Mind {
+  /** seconds between decisions at full power */
+  reaction: number;
+  /** 0..1 steering, lead and weapon timing */
+  aim: number;
+  /** 0..1 reading the arena */
+  awareness: number;
+  trait: BrainTrait | null;
+  /** the share of its rated draw the power split gives it, and the least it runs on */
+  p: number;
+  min: number;
+  plan: BattlePlan;
+}
+
 export interface BotStats {
   design: BotDesign;
   name: string;
@@ -80,6 +94,8 @@ export interface BotStats {
   drive: DriveDef;
   core: CoreDef;
   armor: ArmorDef;
+  brain: BrainDef;
+  mind: Mind;
   mass: number;
   hpMax: number;
   armorMax: Record<HitZone, number>;
@@ -110,6 +126,8 @@ export interface BotStats {
   cooling: number;
   volatile: boolean;
   driveHeat: number;
+  /** heat per second from an overvolted brain, which never rests */
+  brainHeat: number;
   front: WeaponStats | null;
   top: WeaponStats | null;
   compHp: { drive: number; front: number; top: number; core: number };
@@ -133,7 +151,8 @@ function weaponStats(id: string | null, slot: 'front' | 'top', p: number, levels
   const def = weaponOf(id);
   const level = levels(id);
   const m = levelMult(level);
-  const pw = def.power > 0 ? p : 0;
+  // below its minimum a powered weapon does not run at all
+  const pw = def.power > 0 && p >= minPowerOf(def) - 1e-9 ? p : 0;
   const sq = Math.sqrt(pw);
   const rate = def.power > 0 ? 0.3 + 0.7 * pw : 1;
   const k = trimOf(def);
@@ -176,6 +195,7 @@ export function designWeight(d: BotDesign): number {
   if (d.front) kg += weaponOf(d.front).weight;
   if (d.top) kg += weaponOf(d.top).weight;
   for (const m of d.modules) kg += moduleOf(m).weight;
+  kg += brainOf(d.brain).weight;
   return kg + armorWeight(d);
 }
 
@@ -187,31 +207,63 @@ export function ratedDraw(d: BotDesign) {
     front: d.front ? weaponOf(d.front).power : 0,
     top: d.top ? weaponOf(d.top).power : 0,
     aux,
+    brain: brainOf(d.brain).power,
   };
 }
 
+export type PowerKey = keyof PowerSplit;
+export const POWER_KEYS: PowerKey[] = ['drive', 'front', 'top', 'aux', 'brain'];
+
 export function powerDraw(d: BotDesign, split: PowerSplit = d.power): number {
   const r = ratedDraw(d);
-  return r.drive * split.drive + r.front * split.front + r.top * split.top + r.aux * split.aux;
+  return POWER_KEYS.reduce((sum, k) => sum + r[k] * split[k], 0);
+}
+
+/** The least share each system runs on (0 for a system the robot lacks). */
+export function minShares(d: BotDesign): PowerSplit {
+  const aux = d.modules.reduce((m, id) => Math.max(m, minPowerOf(moduleOf(id))), 0);
+  return {
+    drive: minPowerOf(driveOf(d.drive)),
+    front: d.front ? minPowerOf(weaponOf(d.front)) : 0,
+    top: d.top ? minPowerOf(weaponOf(d.top)) : 0,
+    aux,
+    brain: minPowerOf(brainOf(d.brain)),
+  };
+}
+
+/** kW needed to keep every system at its minimum (weapons switched off excepted). */
+export function minDraw(d: BotDesign): number {
+  const r = ratedDraw(d);
+  const m = minShares(d);
+  return r.drive * m.drive + r.aux * m.aux + r.brain * m.brain + (d.power.front > 0 ? r.front * m.front : 0) + (d.power.top > 0 ? r.top * m.top : 0);
 }
 
 export function coreOutput(d: BotDesign, levels: Levels = LEVEL_ONE): number {
   return coreOf(d.core).output * levelMult(levels(d.core));
 }
 
-/** Give every system as close to 100% as the core allows, scaling evenly. */
+/**
+ * Give every system as close to 100% as the core allows, scaling evenly, but
+ * never below the share it needs to run.
+ */
 export function autoPower(d: BotDesign, levels: Levels = LEVEL_ONE): PowerSplit {
   const r = ratedDraw(d);
   const out = coreOutput(d, levels);
-  const total = r.drive + r.front + r.top + r.aux;
+  const mins = minShares(d);
+  const total = POWER_KEYS.reduce((sum, k) => sum + r[k], 0);
   const k = total > 0 ? Math.min(1, out / total) : 1;
   const snap = (v: number) => Math.floor(v * 20) / 20;
-  return {
-    drive: Math.max(MIN_DRIVE_POWER, snap(k)),
-    front: r.front ? snap(k) : 1,
-    top: r.top ? snap(k) : 1,
-    aux: r.aux ? snap(k) : 1,
-  };
+  const up = (v: number) => Math.ceil(v * 20 - 1e-9) / 20;
+  const p = {} as PowerSplit;
+  for (const key of POWER_KEYS) p[key] = r[key] ? Math.max(up(mins[key]), snap(k)) : 1;
+  // the minimums may push the total over: take it back from the weapons, then the rest
+  const draw = () => POWER_KEYS.reduce((sum, key) => sum + r[key] * p[key], 0);
+  for (const key of ['top', 'front', 'aux', 'drive', 'brain'] as PowerKey[]) {
+    while (draw() > out + 1e-9 && r[key] && p[key] - 0.05 >= up(mins[key]) - 1e-9) p[key] = Math.round((p[key] - 0.05) * 20) / 20;
+  }
+  // still too much even at the minimums: switch the weapons and modules off, top first
+  for (const key of ['top', 'aux', 'front'] as PowerKey[]) if (draw() > out + 1e-9 && r[key]) p[key] = 0;
+  return p;
 }
 
 export function computeStats(d: BotDesign, levels: Levels = LEVEL_ONE): BotStats {
@@ -258,7 +310,7 @@ export function computeStats(d: BotDesign, levels: Levels = LEVEL_ONE): BotStats
   };
   const frontWedge = Math.max(0, Math.min(1, (lowFront - 0.4) / 0.5)) * (front && ['hspin', 'vspin', 'ring', 'saw'].includes(front.def.type) ? 0.6 : 1);
 
-  const pD = Math.max(MIN_DRIVE_POWER, d.power.drive);
+  const pD = Math.max(minPowerOf(drive), d.power.drive);
   const massK = Math.pow(85 / Math.max(mass, 30), 0.22);
   const driveForce = drive.force * drM * Math.sqrt(pD);
   const driveSpeed = drive.speed * (1 + 0.03 * (levels(d.drive) - 1)) * Math.sqrt(pD) * massK;
@@ -290,6 +342,18 @@ export function computeStats(d: BotDesign, levels: Levels = LEVEL_ONE): BotStats
     }
   }
 
+  const brain = brainOf(d.brain);
+  const brL = levels(d.brain);
+  const mind: Mind = {
+    reaction: brain.reaction / levelMult(brL),
+    aim: Math.min(0.99, brain.aim + 0.02 * (brL - 1)),
+    awareness: Math.min(0.99, brain.awareness + 0.02 * (brL - 1)),
+    trait: brain.trait ?? null,
+    p: d.power.brain,
+    min: brain.minPower,
+    plan: d.plan,
+  };
+
   const cap = effects.has('capacitor');
   const draw = powerDraw(d);
   return {
@@ -300,6 +364,8 @@ export function computeStats(d: BotDesign, levels: Levels = LEVEL_ONE): BotStats
     drive,
     core,
     armor,
+    brain,
+    mind,
     mass,
     hpMax: chassis.hp * chM * DMG_SCALE,
     armorMax,
@@ -329,6 +395,7 @@ export function computeStats(d: BotDesign, levels: Levels = LEVEL_ONE): BotStats
     cooling: core.cooling * (1 + modVal('heatsink')) * (1 + 0.05 * (levels(d.core) - 1)),
     volatile: !!core.volatile,
     driveHeat: OVERVOLT_HEAT * Math.max(0, d.power.drive - 1) * drive.power,
+    brainHeat: OVERVOLT_HEAT * Math.max(0, d.power.brain - 1) * brain.power,
     front,
     top,
     compHp: {
@@ -366,16 +433,32 @@ export function validate(d: BotDesign, levels: Levels = LEVEL_ONE): DesignIssue[
   if (kg > WEIGHT_LIMIT + 1e-6) out.push({ level: 'error', text: `Overweight: ${kg.toFixed(1)} of ${WEIGHT_LIMIT} kg` });
   const draw = powerDraw(d);
   const output = coreOutput(d, levels);
+  const mins = minShares(d);
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const least = minDraw(d);
+  if (least > output + 1e-6) out.push({ level: 'error', text: `This core cannot keep it all running: even at their minimum the parts need ${least.toFixed(1)} of ${output.toFixed(1)} kW` });
   if (draw > output + 1e-6) out.push({ level: 'error', text: `Power overload: ${draw.toFixed(1)} of ${output.toFixed(1)} kW` });
+  if (d.power.drive < mins.drive - 1e-9) out.push({ level: 'error', text: `The drive needs at least ${pct(mins.drive)} power to move` });
+  if (d.power.brain < mins.brain - 1e-9) out.push({ level: 'warn', text: `The brain is starved: below ${pct(mins.brain)} it keeps rebooting mid-fight` });
+  for (const slot of ['front', 'top'] as const) {
+    const id = d[slot];
+    if (id && weaponOf(id).power > 0 && d.power[slot] > 0 && d.power[slot] < mins[slot] - 1e-9) {
+      out.push({ level: 'warn', text: `${weaponOf(id).name} needs ${pct(mins[slot])} to run: as it is, it is switched off` });
+    }
+  }
   if (d.modules.length > ch.modules) out.push({ level: 'error', text: `Only ${ch.modules} module bays on this frame` });
   if (d.top && !ch.topMount) out.push({ level: 'error', text: 'This frame has no top mount' });
   if (d.front && weaponOf(d.front).mount === 'full' && d.top) out.push({ level: 'error', text: 'A ring spinner takes the top mount too' });
   if (d.front && weaponOf(d.front).mount === 'top') out.push({ level: 'error', text: 'That weapon goes on the top mount' });
   if (d.top && weaponOf(d.top).mount !== 'top') out.push({ level: 'error', text: 'That weapon goes on the front' });
   if (!d.front && !d.top) out.push({ level: 'warn', text: 'No weapon: you can only push' });
+  for (const slot of ['front', 'top'] as const) {
+    const id = d[slot];
+    if (id && weaponOf(id).power > 0 && d.power[slot] <= 0) out.push({ level: 'warn', text: `${weaponOf(id).name} is switched off: give it power in the Power tab` });
+  }
   if (!ch.invertible && !computeStats(d, levels).selfRight) out.push({ level: 'warn', text: 'Cannot self-right: one good flip and you are counted out' });
   const s = computeStats(d, levels);
-  const heatRate = s.driveHeat + (s.front?.overvoltHeat ?? 0) + (s.top?.overvoltHeat ?? 0);
+  const heatRate = s.driveHeat + s.brainHeat + (s.front?.overvoltHeat ?? 0) + (s.top?.overvoltHeat ?? 0);
   if (heatRate > s.cooling) out.push({ level: 'warn', text: 'Overvolted: runs hot, may overheat in a long fight' });
   return out;
 }
@@ -399,6 +482,27 @@ export interface Readout {
   dpsEstimate: number;
   heatRate: number; // net heat per second when everything works flat out
   label: string;
+  brain: string;
+  /** seconds per decision, aim and awareness at this power */
+  reaction: number;
+  aim: number;
+  awareness: number;
+  brownout: boolean;
+}
+
+/**
+ * The mind at a given power: e is the share of its rated draw actually
+ * reaching the brain (the split, less what core damage and overheating take).
+ * Starved below its minimum it browns out; overvolted it thinks faster.
+ */
+export function mindAt(m: Mind, e: number) {
+  const f = e <= 1 ? Math.pow(Math.max(e, 0.05), 0.6) : 1 + ((e - 1) / 0.3) * 0.2;
+  return {
+    brownout: e < m.min - 1e-9,
+    reaction: m.reaction / Math.max(0.2, f),
+    aim: m.aim * (0.82 + 0.18 * Math.min(1, e)),
+    awareness: m.awareness,
+  };
 }
 
 export function readout(d: BotDesign, levels: Levels = LEVEL_ONE): Readout {
@@ -458,7 +562,8 @@ export function readout(d: BotDesign, levels: Levels = LEVEL_ONE): Readout {
     }
   }
   const armorTotal = (['front', 'left', 'right', 'rear', 'top'] as HitZone[]).reduce((a, z) => a + s.armorMax[z], 0);
-  const heatRate = s.driveHeat + (s.front?.overvoltHeat ?? 0) + (s.top?.overvoltHeat ?? 0) - s.cooling;
+  const heatRate = s.driveHeat + s.brainHeat + (s.front?.overvoltHeat ?? 0) + (s.top?.overvoltHeat ?? 0) - s.cooling;
+  const mind = mindAt(s.mind, s.mind.p);
   return {
     weight: s.mass,
     draw: s.draw,
@@ -474,6 +579,11 @@ export function readout(d: BotDesign, levels: Levels = LEVEL_ONE): Readout {
     dpsEstimate: hitEvery > 0 ? (hitDamage * DMG_SCALE) / hitEvery : 0,
     heatRate,
     label: archetypeLabel(d),
+    brain: s.brain.name,
+    reaction: mind.reaction,
+    aim: mind.aim,
+    awareness: mind.awareness,
+    brownout: mind.brownout,
   };
 }
 

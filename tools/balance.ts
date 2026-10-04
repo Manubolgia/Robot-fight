@@ -3,7 +3,7 @@
 //   node tools/balance.ts [tier] [fightsPerPair] [arenas,comma,separated]
 import { archetypesFor, makeBuild } from '../src/career/builds.ts';
 import { arenaOf } from '../src/data/arenas.ts';
-import { Driver, skillFor } from '../src/sim/ai.ts';
+import { Driver } from '../src/sim/ai.ts';
 import { mulberry32 } from '../src/sim/rng.ts';
 import { computeStats } from '../src/sim/stats.ts';
 import { World, DT } from '../src/sim/world.ts';
@@ -39,8 +39,7 @@ for (let i = 0; i < archs.length; i++) {
       const arena = arenaOf(arenas[k % arenas.length]);
       const w = new World(computeStats(swap ? db : da), computeStats(swap ? da : db), arena, { seed });
       w.quiet = true;
-      const sk = skillFor(tier);
-      const drivers = [new Driver(w, 0, sk, seed), new Driver(w, 1, sk, seed + 5)];
+      const drivers = [new Driver(w, 0, seed), new Driver(w, 1, seed + 5)];
       let n = 0;
       while (!w.over && n < 12000) {
         drivers[0].update(DT);

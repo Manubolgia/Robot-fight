@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { buy, levelOf, owns, upgrade, upgradeCap } from '../../career/career.ts';
-import { ARMORS, CHASSIS, CORES, DRIVES, MAX_LEVEL, MODULES, WEAPONS, WEAPON_FAMILY, upgradeCost } from '../../data/parts.ts';
+import { ARMORS, BRAINS, CHASSIS, CORES, DRIVES, MAX_LEVEL, MODULES, WEAPONS, WEAPON_FAMILY, upgradeCost } from '../../data/parts.ts';
 import type { PartDef, WeaponDef } from '../../data/types.ts';
 import { sfx } from '../../audio/sfx.ts';
 import { Btn, Pips, TabBar, Tip, TopBar, fmtMoney } from '../components.tsx';
@@ -8,7 +8,7 @@ import { Icon, partIcon } from '../icons.tsx';
 import { toast, update, useApp } from '../store.ts';
 import { specsOf } from './Garage.tsx';
 
-type Cat = 'chassis' | 'drive' | 'core' | 'weapon' | 'armor' | 'module';
+type Cat = 'chassis' | 'drive' | 'core' | 'weapon' | 'armor' | 'module' | 'brain';
 const CATS: Array<[Cat, string, string, PartDef[]]> = [
   ['weapon', 'target', 'Weapons', WEAPONS],
   ['chassis', 'frame', 'Frames', CHASSIS],
@@ -16,6 +16,7 @@ const CATS: Array<[Cat, string, string, PartDef[]]> = [
   ['core', 'battery', 'Cores', CORES],
   ['armor', 'shield', 'Armour', ARMORS],
   ['module', 'chip', 'Modules', MODULES],
+  ['brain', 'brain', 'Brains', BRAINS],
 ];
 
 export function Shop() {

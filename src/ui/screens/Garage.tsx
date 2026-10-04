@@ -1,10 +1,10 @@
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { MAX_BOTS, activeBot, addBot, buy, levelOf, levels, owns, removeBot, type Career } from '../../career/career.ts';
-import { ARMORS, CHASSIS, CORES, DRIVES, MODULES, WEAPONS, WEAPON_FAMILY, part } from '../../data/parts.ts';
-import type { ArmorZone, BotDesign, PartDef, PowerSplit, WeaponDef } from '../../data/types.ts';
+import { ARMORS, BRAINS, CHASSIS, CORES, DRIVES, MODULES, WEAPONS, WEAPON_FAMILY, minPowerOf, part } from '../../data/parts.ts';
+import type { ArmorZone, BattlePlan, BotDesign, BrainDef, BrainTrait, PartDef, PowerSplit, WeaponDef } from '../../data/types.ts';
 import { MAX_PLATES, WEIGHT_LIMIT } from '../../data/types.ts';
-import { ARMOR_KG, MAX_POWER, MIN_DRIVE_POWER, autoPower, computeStats, coreOutput, designWeight, powerDraw, ratedDraw, readout, scaledHp, validate, weaponSpecs, type Readout } from '../../sim/stats.ts';
+import { ARMOR_KG, MAX_POWER, autoPower, computeStats, coreOutput, designWeight, minShares, powerDraw, ratedDraw, readout, scaledHp, validate, weaponSpecs, type Readout } from '../../sim/stats.ts';
 import { sfx } from '../../audio/sfx.ts';
 import { Btn, Pips, Stat, Stepper, TabBar, Tip, TopBar, confirm, fmtMoney } from '../components.tsx';
 import { Icon, partIcon } from '../icons.tsx';
@@ -12,7 +12,7 @@ import { Stage } from '../stage.tsx';
 import { app, go, toast, update, useApp } from '../store.ts';
 import { PaintPicker } from './NewGame.tsx';
 
-type Tab = 'frame' | 'drive' | 'core' | 'weapons' | 'armor' | 'modules' | 'power' | 'paint' | 'stats';
+type Tab = 'frame' | 'drive' | 'core' | 'weapons' | 'armor' | 'modules' | 'brain' | 'power' | 'plan' | 'paint' | 'stats';
 const TABS: Array<[Tab, string, string]> = [
   ['frame', 'frame', 'Frame'],
   ['drive', 'wheel', 'Drive'],
@@ -20,17 +20,27 @@ const TABS: Array<[Tab, string, string]> = [
   ['weapons', 'target', 'Weapons'],
   ['armor', 'shield', 'Armour'],
   ['modules', 'chip', 'Modules'],
+  ['brain', 'brain', 'Brain'],
   ['power', 'bolt', 'Power'],
+  ['plan', 'flag', 'Plan'],
   ['paint', 'brush', 'Paint'],
   ['stats', 'speed', 'Stats'],
 ];
 
+/** The bot in the career with this id, for screens that edit a robot that may not be the active one. */
+const botIn = (cc: Career, id: string) => cc.bots.find((b) => b.id === id) ?? activeBot(cc);
+
 /** Keep the power split legal after a change: rebalance only if it no longer fits. */
 export function fixPower(d: BotDesign, c: Career) {
   const r = ratedDraw(d);
+  const mins = minShares(d);
   if (!r.front) d.power.front = 1;
   if (!r.top) d.power.top = 1;
   if (!r.aux) d.power.aux = 1;
+  // a new part may need more than the old one ran on
+  d.power.drive = Math.max(d.power.drive, mins.drive);
+  d.power.brain = Math.max(d.power.brain, mins.brain);
+  if (r.aux && d.power.aux > 0) d.power.aux = Math.max(d.power.aux, mins.aux);
   if (powerDraw(d) > coreOutput(d, levels(c)) + 1e-6) d.power = autoPower(d, levels(c));
 }
 
@@ -144,7 +154,9 @@ export function Garage() {
         {tab === 'weapons' && <WeaponsTab c={c} bot={bot} />}
         {tab === 'armor' && <ArmorTab c={c} bot={bot} />}
         {tab === 'modules' && <ModulesTab c={c} bot={bot} />}
+        {tab === 'brain' && <BrainTab c={c} bot={bot} />}
         {tab === 'power' && <PowerTab c={c} bot={bot} />}
+        {tab === 'plan' && <PlanTab bot={bot} />}
         {tab === 'paint' && <PaintTab c={c} bot={bot} />}
         {tab === 'stats' && <StatsTab r={r} bot={bot} c={c} />}
       </div>
@@ -177,6 +189,9 @@ function deltaLine(before: Readout, after: Readout): ComponentChildren {
     ['HP', after.hp - before.hp, 1, ''],
     ['Armour', after.armorAvg - before.armorAvg, 1, ''],
     ['Hit', after.hitDamage - before.hitDamage, 1, ''],
+    ['Thinks', 1 / after.reaction - 1 / before.reaction, 0.05, '/s'],
+    ['Aim', (after.aim - before.aim) * 100, 0.5, '%'],
+    ['Reads arena', (after.awareness - before.awareness) * 100, 0.5, '%'],
   ];
   const shown = items.filter(([, v, eps]) => Math.abs(v) >= eps);
   if (!shown.length) return null;
@@ -231,9 +246,22 @@ export function specsOf(p: PartDef): Array<[string, string]> {
     case 'module':
       if (p.power) out.push(['bolt', `${p.power} kW`]);
       break;
+    case 'brain':
+      out.push(['bolt', `${p.power} kW · min ${Math.round(p.minPower * 100)}%`], ['speed', `${(1 / p.reaction).toFixed(1)} decisions/s`], ['target', `aim ${Math.round(p.aim * 100)}%`], ['globe', `reads arena ${Math.round(p.awareness * 100)}%`]);
+      if (p.trait) out.push(['star', TRAIT_LABEL[p.trait]]);
+      break;
   }
+  if ((p.kind === 'weapon' || p.kind === 'drive') && minPowerOf(p) > 0) out.push(['boltO', `runs from ${Math.round(minPowerOf(p) * 100)}%`]);
   return out;
 }
+
+export const TRAIT_LABEL: Record<BrainTrait, string> = { reckless: 'reckless', cautious: 'cautious', hunter: 'hunter', adaptive: 'adaptive' };
+export const TRAIT_TEXT: Record<BrainTrait, string> = {
+  reckless: 'Reckless: never backs off and pays no mind to the hazards.',
+  cautious: 'Cautious: keeps its weapon between it and trouble, backs off when exposed.',
+  hunter: 'Hunter: circles to the sides and rear before it strikes.',
+  adaptive: 'Adaptive: reads the other robot and strikes right after it commits.',
+};
 
 function PartRow({ c, bot, p, equipped, onEquip, onRemove, note, preview }: { c: Career; bot: BotDesign; p: PartDef; equipped: boolean; onEquip: () => void; onRemove?: () => void; note?: string; preview?: (d: BotDesign, id: string) => void }) {
   const have = owns(c, p.id);
@@ -591,19 +619,23 @@ function ModulesTab({ c, bot }: { c: Career; bot: BotDesign }) {
 export function PowerTab({ c, bot }: { c: Career; bot: BotDesign }) {
   const lv = levels(c);
   const rated = ratedDraw(bot);
+  const mins = minShares(bot);
   const out = coreOutput(bot, lv);
   const draw = powerDraw(bot);
   const s = computeStats(bot, lv);
-  const rows: Array<{ key: keyof PowerSplit; label: string; icon: string; kw: number; min: number; effect: string }> = [];
-  rows.push({ key: 'drive', label: `Drive · ${part(bot.drive).name}`, icon: 'wheel', kw: rated.drive, min: MIN_DRIVE_POWER, effect: `${(s.driveSpeed * 3.6).toFixed(1)} km/h · ${(s.driveForce / 1000).toFixed(2)} kN · ${Math.round((s.turnRate * 180) / Math.PI)}°/s` });
-  if (rated.front && s.front) rows.push({ key: 'front', label: `Front · ${s.front.def.name}`, icon: partIcon('weapon', s.front.def.type), kw: rated.front, min: 0, effect: weaponEffect(s.front) });
-  if (rated.top && s.top) rows.push({ key: 'top', label: `Top · ${s.top.def.name}`, icon: partIcon('weapon', s.top.def.type), kw: rated.top, min: 0, effect: weaponEffect(s.top) });
-  if (rated.aux) rows.push({ key: 'aux', label: 'Modules', icon: 'chip', kw: rated.aux, min: 0, effect: 'magnets and sensors' });
-  const heat = s.driveHeat + (s.front?.overvoltHeat ?? 0) + (s.top?.overvoltHeat ?? 0);
+  const r = readout(bot, lv);
+  // a weapon or the modules can be switched off; the drive and the brain cannot
+  const rows: Array<{ key: keyof PowerSplit; label: string; icon: string; kw: number; min: number; off: boolean; effect: string }> = [];
+  rows.push({ key: 'drive', label: `Drive · ${part(bot.drive).name}`, icon: 'wheel', kw: rated.drive, min: mins.drive, off: false, effect: `${(s.driveSpeed * 3.6).toFixed(1)} km/h · ${(s.driveForce / 1000).toFixed(2)} kN · ${Math.round((s.turnRate * 180) / Math.PI)}°/s` });
+  if (rated.front && s.front) rows.push({ key: 'front', label: `Front · ${s.front.def.name}`, icon: partIcon('weapon', s.front.def.type), kw: rated.front, min: mins.front, off: true, effect: weaponEffect(s.front) });
+  if (rated.top && s.top) rows.push({ key: 'top', label: `Top · ${s.top.def.name}`, icon: partIcon('weapon', s.top.def.type), kw: rated.top, min: mins.top, off: true, effect: weaponEffect(s.top) });
+  if (rated.aux) rows.push({ key: 'aux', label: 'Modules', icon: 'chip', kw: rated.aux, min: mins.aux, off: true, effect: bot.power.aux > 0 ? 'magnets and sensors' : 'switched off' });
+  rows.push({ key: 'brain', label: `Brain · ${s.brain.name}`, icon: 'brain', kw: rated.brain, min: mins.brain, off: false, effect: `${(1 / r.reaction).toFixed(1)} decisions/s · aim ${Math.round(r.aim * 100)}%` });
+  const heat = s.driveHeat + s.brainHeat + (s.front?.overvoltHeat ?? 0) + (s.top?.overvoltHeat ?? 0);
   return (
     <>
       <Tip id="power">
-        Your core makes a fixed amount of power. Give a system less and it gets weaker; push it past 100% (overvolt) and it gets stronger but builds heat. Overheat and everything runs at half power.
+        Your core makes a fixed amount of power. Give a system less and it gets weaker; push it past 100% (overvolt) and it gets stronger but builds heat. Every part needs a minimum (the red mark): below it a weapon is switched off, and the drive and the brain will not go lower. Overheat and everything runs at half power, which can drop a brain kept at its minimum into a reboot.
       </Tip>
       <div class="card" style={{ marginBottom: '10px' }}>
         <div class="row">
@@ -614,7 +646,7 @@ export function PowerTab({ c, bot }: { c: Career; bot: BotDesign }) {
               Using {draw.toFixed(2)} of {out.toFixed(2)} kW · {(out - draw).toFixed(2)} kW spare
             </div>
           </div>
-          <Btn size="xs" onClick={() => update((cc) => (activeBot(cc).power = autoPower(activeBot(cc), levels(cc))))}>
+          <Btn size="xs" onClick={() => update((cc) => (botIn(cc, bot.id).power = autoPower(botIn(cc, bot.id), levels(cc))))}>
             Auto
           </Btn>
         </div>
@@ -631,35 +663,135 @@ export function PowerTab({ c, bot }: { c: Career; bot: BotDesign }) {
           const others = draw - row.kw * v;
           const maxByCore = row.kw > 0 ? (out - others) / row.kw : MAX_POWER;
           const max = Math.max(row.min, Math.min(MAX_POWER, Math.floor(maxByCore * 20 + 1e-6) / 20));
+          const low = v < row.min - 1e-9;
           return (
             <div class="power-row" key={row.key}>
               <div class="head">
                 <Icon name={row.icon} size={18} style={{ color: 'var(--accent)' }} />
                 <b class="ellipsis small">{row.label}</b>
-                <span class={`pct ${v > 1 ? 'over' : ''}`}>{Math.round(v * 100)}%</span>
+                <span class={`pct ${v > 1 ? 'over' : ''}`} style={low ? { color: 'var(--red)' } : undefined}>
+                  {v <= 0 ? 'OFF' : `${Math.round(v * 100)}%`}
+                </span>
               </div>
-              <input
-                class="slider"
-                type="range"
-                min={0}
-                max={130}
-                step={5}
-                value={Math.round(v * 100)}
-                style={{ '--p': `${(v / 1.3) * 100}%`, '--fill': v > 1 ? 'var(--orange)' : 'var(--cyan)' }}
-                onInput={(e) => {
-                  let nv = Number((e.target as HTMLInputElement).value) / 100;
-                  nv = Math.max(row.min, Math.min(max, nv));
-                  (e.target as HTMLInputElement).value = String(Math.round(nv * 100));
-                  update((cc) => (activeBot(cc).power[row.key] = Math.round(nv * 20) / 20));
-                }}
-              />
+              <div class="slider-wrap">
+                <input
+                  class="slider"
+                  type="range"
+                  min={0}
+                  max={130}
+                  step={5}
+                  value={Math.round(v * 100)}
+                  style={{ '--p': `${(v / 1.3) * 100}%`, '--fill': v > 1 ? 'var(--orange)' : 'var(--cyan)' }}
+                  onInput={(e) => {
+                    let nv = Number((e.target as HTMLInputElement).value) / 100;
+                    // below the minimum: off if it can be, else held at the minimum
+                    if (nv < row.min - 1e-9) nv = row.off && nv < row.min / 2 ? 0 : row.min;
+                    nv = Math.min(max, nv);
+                    (e.target as HTMLInputElement).value = String(Math.round(nv * 100));
+                    update((cc) => (botIn(cc, bot.id).power[row.key] = Math.round(nv * 20) / 20));
+                  }}
+                />
+                {row.min > 0 && <i class="min-mark" style={{ left: `calc(13px + (100% - 26px) * ${row.min / 1.3})` }} />}
+              </div>
               <div class="row tiny muted">
                 <span class="grow">{row.effect}</span>
-                <span>{(row.kw * v).toFixed(2)} kW</span>
+                <span>
+                  {(row.kw * v).toFixed(2)} kW · min {Math.round(row.min * 100)}%
+                </span>
               </div>
             </div>
           );
         })}
+      </div>
+    </>
+  );
+}
+
+// ---- brain ------------------------------------------------------------------------------
+
+function BrainTab({ c, bot }: { c: Career; bot: BotDesign }) {
+  const r = readout(bot, levels(c));
+  const b = part<BrainDef>(bot.brain);
+  return (
+    <>
+      <Tip id="brain">
+        The brain fights the robot for you. A sharper one reacts sooner, aims and times its weapon better and reads the hazards, but it draws power your weapons and wheels could have had, and it weighs more. Each needs a minimum share of its power: lose power mid-fight (core damage, overheating) below that and it reboots, frozen for a moment.
+      </Tip>
+      <div class="card col" style={{ gap: '6px', marginBottom: '10px' }}>
+        <div class="row">
+          <Icon name="brain" style={{ color: 'var(--cyan)' }} />
+          <b class="grow">{b.name}</b>
+          {b.trait && <span class="badge cyan">{TRAIT_LABEL[b.trait]}</span>}
+        </div>
+        <Stat icon="speed" label="Decisions" value={1 / r.reaction} max={12} unit="/s" fmt={(v) => v.toFixed(1)} color="yellow" />
+        <Stat icon="target" label="Aim" value={r.aim * 100} max={100} unit="%" fmt={(v) => v.toFixed(0)} />
+        <Stat icon="globe" label="Reads arena" value={r.awareness * 100} max={100} unit="%" fmt={(v) => v.toFixed(0)} color="green" />
+        {b.trait && <div class="small muted">{TRAIT_TEXT[b.trait]}</div>}
+        <div class="tiny muted">At {Math.round(bot.power.brain * 100)}% power. Overvolt it in the Power tab to think faster; it heats up.</div>
+      </div>
+      <PartList c={c} bot={bot} parts={BRAINS} current={bot.brain} apply={(d, id) => (d.brain = id)} />
+    </>
+  );
+}
+
+// ---- battle plan ------------------------------------------------------------------------
+
+const STANCES: Array<[BattlePlan['stance'], string, string]> = [
+  ['aggressive', 'Aggressive', 'Presses even with a half-ready weapon, never gives ground. Judges love it; spinners and hammers punish it.'],
+  ['balanced', 'Balanced', 'Attacks when its weapon is ready, gives ground while it is not.'],
+  ['defensive', 'Defensive', 'Waits for clean openings and backs off when hurt. Safer, but it scores less aggression.'],
+];
+const APPROACHES: Array<[BattlePlan['approach'], string, string]> = [
+  ['direct', 'Head-on', 'Straight at them, weapon first.'],
+  ['flank', 'Flank', 'Circles to their side or rear before striking: good against front-heavy weapons, slow against fast robots.'],
+  ['counter', 'Counter', 'Keeps its distance until they commit or their weapon is spent, then punishes.'],
+];
+
+export function PlanTab({ bot }: { bot: BotDesign }) {
+  const plan = bot.plan;
+  const set = (p: Partial<BattlePlan>) => {
+    sfx.click();
+    update((cc) => {
+      const b = botIn(cc, bot.id);
+      b.plan = { ...b.plan, ...p };
+    });
+  };
+  const stance = STANCES.find(([k]) => k === plan.stance)!;
+  const approach = APPROACHES.find(([k]) => k === plan.approach)!;
+  return (
+    <>
+      <Tip id="plan">
+        You do not drive in the arena: the brain does, following this plan. Better brains carry it out better.
+      </Tip>
+      <div class="card col" style={{ gap: '10px' }}>
+        <div class="label">Stance</div>
+        <div class="seg">
+          {STANCES.map(([k, label]) => (
+            <button key={k} class={plan.stance === k ? 'on' : ''} onClick={() => set({ stance: k })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div class="small muted">{stance[2]}</div>
+        <div class="label">Approach</div>
+        <div class="seg">
+          {APPROACHES.map(([k, label]) => (
+            <button key={k} class={plan.approach === k ? 'on' : ''} onClick={() => set({ approach: k })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div class="small muted">{approach[2]}</div>
+        <div class="label">Hazards</div>
+        <div class="seg">
+          <button class={plan.hazards ? 'on' : ''} onClick={() => set({ hazards: true })}>
+            Use them
+          </button>
+          <button class={!plan.hazards ? 'on' : ''} onClick={() => set({ hazards: false })}>
+            Avoid them
+          </button>
+        </div>
+        <div class="small muted">{plan.hazards ? 'Shoves them toward the pit, the saws and the spiked walls when it can.' : 'Fights in the open and keeps well clear of every hazard.'}</div>
       </div>
     </>
   );
@@ -758,6 +890,12 @@ function StatsTab({ r, bot, c }: { r: Readout; bot: BotDesign; c: Career }) {
         <Stat icon="target" label="Main hit" value={r.hitDamage} max={250} fmt={(v) => v.toFixed(0)} color="red" />
         <Stat icon="turn" label="Every" value={r.hitEvery} max={8} unit=" s" fmt={(v) => v.toFixed(1)} color="yellow" />
         <Stat icon="fire" label="Damage/s" value={r.dpsEstimate} max={80} fmt={(v) => v.toFixed(1)} color="red" />
+        <div class="label" style={{ marginTop: '8px' }}>
+          Brain · {r.brain}
+        </div>
+        <Stat icon="speed" label="Decisions" value={1 / r.reaction} max={12} unit="/s" fmt={(v) => v.toFixed(1)} color="yellow" />
+        <Stat icon="target" label="Aim" value={r.aim * 100} max={100} unit="%" fmt={(v) => v.toFixed(0)} />
+        <Stat icon="globe" label="Reads arena" value={r.awareness * 100} max={100} unit="%" fmt={(v) => v.toFixed(0)} color="green" />
       </div>
       <div class="card" style={{ marginTop: '10px', padding: '4px 14px' }}>
         <div class="kv">
@@ -780,7 +918,7 @@ function StatsTab({ r, bot, c }: { r: Readout; bot: BotDesign; c: Career }) {
         </div>
         <div class="kv">
           <span>Part value</span>
-          <b>{fmtMoney([bot.chassis, bot.drive, bot.core, bot.front, bot.top, bot.armor.material, ...bot.modules].filter((x): x is string => !!x).reduce((t, id) => t + part(id).price, 0))}</b>
+          <b>{fmtMoney([bot.chassis, bot.drive, bot.core, bot.front, bot.top, bot.armor.material, bot.brain, ...bot.modules].filter((x): x is string => !!x).reduce((t, id) => t + part(id).price, 0))}</b>
         </div>
       </div>
       <div class="small muted" style={{ marginTop: '10px' }}>

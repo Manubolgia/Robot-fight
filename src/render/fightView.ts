@@ -51,8 +51,8 @@ export class FightView {
   modeT = 0;
   koBot = -1;
   /** fraction of the screen height the HUD covers top and bottom */
-  insetTop = 0.1;
-  insetBottom = 0.3;
+  insetTop = 0.13;
+  insetBottom = 0.17;
 
   constructor(world: World, designs: [BotDesign, BotDesign]) {
     this.world = world;

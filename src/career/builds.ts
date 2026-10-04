@@ -3,11 +3,11 @@
 // armour the way that strategy wants. Used for every computer team, for the
 // starter kits and by the balance tests.
 
-import { ARMORS, CHASSIS, CORES, DRIVES, MODULES, WEAPONS, chassisOf, coreOf, driveOf, moduleOf, weaponOf } from '../data/parts.ts';
-import type { ArmorZone, BotDesign, ChassisShape, DriveStyle, ModuleEffect, Paint, PowerSplit, Tier, WeaponType } from '../data/types.ts';
+import { ARMORS, BRAINS, CHASSIS, CORES, DRIVES, MODULES, WEAPONS, brainOf, chassisOf, coreOf, driveOf, moduleOf, weaponOf } from '../data/parts.ts';
+import type { ArmorZone, BattlePlan, BotDesign, BrainTrait, ChassisShape, DriveStyle, ModuleEffect, Paint, PowerSplit, Tier, WeaponType } from '../data/types.ts';
 import { MAX_PLATES, WEIGHT_LIMIT } from '../data/types.ts';
 import { pick, type Rng } from '../sim/rng.ts';
-import { MAX_POWER, MIN_DRIVE_POWER, OVERVOLT_HEAT, designWeight, ratedDraw } from '../sim/stats.ts';
+import { MAX_POWER, OVERVOLT_HEAT, POWER_KEYS, designWeight, minShares, powerDraw, ratedDraw, type PowerKey } from '../sim/stats.ts';
 
 export interface Archetype {
   id: string;
@@ -27,6 +27,10 @@ export interface Archetype {
   topRequired?: boolean;
   /** first tier whose parts can build it (its signature weapon) */
   from: Tier;
+  /** how its brain is told to fight */
+  plan: BattlePlan;
+  /** brain quirks that suit it */
+  traits: BrainTrait[];
 }
 
 export const ARCHETYPES: Archetype[] = [
@@ -35,72 +39,84 @@ export const ARCHETYPES: Archetype[] = [
     front: ['vspin'], top: [], shapes: ['box', 'low'], drive: 'balanced', styles: ['wheels4', 'wheels2'],
     materials: ['ar_nano', 'ar_composite', 'ar_titanium', 'ar_uhmw', 'ar_alu'], zones: { front: 3, sides: 2, rear: 1, top: 1 },
     modules: ['gyro', 'selfright', 'guard', 'shock'], weaponBias: 0.8,
+    plan: { stance: 'balanced', approach: 'counter', hazards: false }, traits: ['adaptive', 'cautious'],
   },
   {
     id: 'drum', from: 1, name: 'Drum Brute', blurb: 'A tough drum that never stops biting.',
     front: ['drum'], top: [], shapes: ['low', 'box'], drive: 'balanced',
     materials: ['ar_nano', 'ar_titanium', 'ar_uhmw', 'ar_steel', 'ar_alu'], zones: { front: 2, sides: 2, rear: 1, top: 1 },
     modules: ['selfright', 'shock', 'guard', 'heatsink'], weaponBias: 0.7,
+    plan: { stance: 'aggressive', approach: 'direct', hazards: false }, traits: ['reckless', 'adaptive'],
   },
   {
     id: 'bar', from: 1, name: 'Bar Spinner', blurb: 'A huge horizontal bar; wide hits, big recoil.',
     front: ['hspin'], top: [], shapes: ['box', 'tall'], drive: 'balanced',
     materials: ['ar_nano', 'ar_titanium', 'ar_uhmw', 'ar_alu'], zones: { sides: 2, rear: 2, front: 1, top: 1 },
     modules: ['selfright', 'shock', 'guard', 'redundant'], weaponBias: 0.75,
+    plan: { stance: 'balanced', approach: 'counter', hazards: false }, traits: ['adaptive', 'cautious'],
   },
   {
     id: 'ring', from: 3, name: 'Ring Spinner', blurb: 'Spinning teeth all the way round.',
     front: ['ring'], top: [], shapes: ['dome', 'box'], drive: 'balanced',
     materials: ['ar_nano', 'ar_titanium', 'ar_uhmw', 'ar_alu'], zones: { top: 2, front: 1, sides: 1, rear: 1 },
     modules: ['shock', 'guard', 'gyro', 'redundant'], weaponBias: 0.75,
+    plan: { stance: 'aggressive', approach: 'direct', hazards: false }, traits: ['reckless', 'cautious'],
   },
   {
     id: 'flipper', from: 1, name: 'Flipper', blurb: 'Gets under, throws them over, counts them out.',
     front: ['flipper'], top: ['flame'], shapes: ['wedge', 'box'], drive: 'push', styles: ['treads', 'wheels4', 'wheels6'],
     materials: ['ar_nano', 'ar_composite', 'ar_uhmw', 'ar_titanium', 'ar_alu'], zones: { front: 2, sides: 2, rear: 1, top: 1 },
     modules: ['skirts', 'magnets', 'shock', 'heatsink'], weaponBias: 0.5,
+    plan: { stance: 'aggressive', approach: 'flank', hazards: true }, traits: ['hunter', 'adaptive'],
   },
   {
     id: 'lifter', from: 2, name: 'Lifter', blurb: 'Scoop, carry, dump them in the hazards.',
     front: ['lifter'], top: [], shapes: ['box', 'wedge'], drive: 'push', styles: ['treads', 'wheels6', 'wheels4'],
     materials: ['ar_nano', 'ar_titanium', 'ar_uhmw', 'ar_steel'], zones: { front: 2, sides: 2, rear: 1, top: 1 },
     modules: ['magnets', 'skirts', 'shock', 'reactive'], weaponBias: 0.45,
+    plan: { stance: 'balanced', approach: 'flank', hazards: true }, traits: ['hunter', 'cautious'],
   },
   {
     id: 'hammer', from: 1, name: 'Hammer Wedge', blurb: 'A wedge to pin them, a hammer to finish them.',
     front: ['wedge'], top: ['hammer', 'axe'], topRequired: true, shapes: ['wedge', 'tall', 'box'], drive: 'balanced',
     materials: ['ar_nano', 'ar_titanium', 'ar_uhmw', 'ar_alu'], zones: { front: 2, sides: 2, rear: 1, top: 1 },
     modules: ['skirts', 'shock', 'wedgelets', 'reactive'], weaponBias: 0.55,
+    plan: { stance: 'balanced', approach: 'direct', hazards: true }, traits: ['hunter', 'adaptive'],
   },
   {
     id: 'crusher', from: 2, name: 'Crusher', blurb: 'Bites through any armour and holds on.',
     front: ['crusher'], top: [], shapes: ['box', 'tall'], drive: 'push', styles: ['treads', 'wheels6', 'wheels4'],
     materials: ['ar_nano', 'ar_titanium', 'ar_uhmw', 'ar_steel'], zones: { front: 2, sides: 2, top: 2, rear: 1 },
     modules: ['selfright', 'shock', 'magnets', 'guard'], weaponBias: 0.55,
+    plan: { stance: 'balanced', approach: 'direct', hazards: true }, traits: ['cautious', 'hunter'],
   },
   {
     id: 'rammer', from: 1, name: 'Rammer', blurb: 'Fast, heavy, spiked. Hits like a train.',
     front: ['ram'], top: [], shapes: ['box', 'low'], drive: 'fast',
     materials: ['ar_nano', 'ar_titanium', 'ar_steel', 'ar_uhmw'], zones: { front: 3, sides: 2, rear: 1, top: 1 },
     modules: ['thorns', 'capacitor', 'selfright', 'shock'], weaponBias: 0,
+    plan: { stance: 'aggressive', approach: 'direct', hazards: true }, traits: ['reckless'],
   },
   {
-    id: 'wedge', from: 1, name: 'Control Wedge', blurb: 'All drive and armour. Wins on control and the hazards.',
-    front: ['wedge'], top: ['flame'], shapes: ['box', 'wedge', 'low'], drive: 'push', styles: ['treads', 'wheels6', 'wheels4'],
+    id: 'wedge', from: 2, name: 'Control Wedge', blurb: 'All drive and armour. Wins on control and the hazards.',
+    front: ['wedge'], top: [], shapes: ['box', 'wedge', 'low'], drive: 'push', styles: ['treads', 'wheels6', 'wheels4'],
     materials: ['ar_nano', 'ar_titanium', 'ar_steel', 'ar_alu'], zones: { front: 3, sides: 3, rear: 2, top: 2 },
     modules: ['magnets', 'skirts', 'thorns', 'capacitor'], weaponBias: 0.2,
+    plan: { stance: 'aggressive', approach: 'direct', hazards: true }, traits: ['reckless', 'cautious'],
   },
   {
     id: 'saw', from: 1, name: 'Saw Bot', blurb: 'Pins with a wedge and grinds away.',
     front: ['wedge', 'saw'], top: ['saw'], topRequired: true, shapes: ['wedge', 'box'], drive: 'balanced',
     materials: ['ar_nano', 'ar_titanium', 'ar_steel', 'ar_alu'], zones: { front: 2, sides: 2, rear: 1, top: 1 },
     modules: ['skirts', 'heatsink', 'shock', 'targeting'], weaponBias: 0.5,
+    plan: { stance: 'aggressive', approach: 'direct', hazards: true }, traits: ['reckless', 'hunter'],
   },
   {
     id: 'firestarter', from: 2, name: 'Firestarter', blurb: 'Flipper and flamethrower: cook them, then toss them.',
     front: ['flipper', 'wedge'], top: ['flame'], shapes: ['wedge', 'box'], drive: 'balanced',
     materials: ['ar_nano', 'ar_titanium', 'ar_steel', 'ar_alu'], zones: { front: 2, sides: 2, rear: 1, top: 1 },
     modules: ['heatsink', 'skirts', 'shock', 'coolant'], weaponBias: 0.5,
+    plan: { stance: 'balanced', approach: 'flank', hazards: true }, traits: ['hunter', 'adaptive'],
   },
 ];
 
@@ -137,7 +153,8 @@ export function makeBuild(arch: Archetype, tier: number, rng: Rng, opts: BuildOp
 
   // weapons
   const frontPool = tierFit(WEAPONS).filter((w) => arch.front.includes(w.type) && w.mount !== 'top');
-  const front = best(rng, frontPool, (w) => w.tier * 10 + w.price / 4000, spread);
+  // a wedge under a top weapon is only there to pin them: the cheap plow does
+  const front = best(rng, frontPool, (w) => (w.type === 'wedge' && arch.topRequired ? -w.price / 100 : w.tier * 10 + w.price / 4000), spread);
   const wantsTop = arch.top.length > 0 && front?.mount !== 'full';
   const topPool = wantsTop ? tierFit(WEAPONS).filter((w) => arch.top.includes(w.type) && w.mount === 'top') : [];
   let top = best(rng, topPool, (w) => w.tier * 10 + w.price / 4000, spread);
@@ -158,6 +175,13 @@ export function makeBuild(arch: Archetype, tier: number, rng: Rng, opts: BuildOp
   const driveScore = (d: (typeof DRIVES)[number]) =>
     d.tier * 6 + (arch.drive === 'fast' ? d.speed * 3 : arch.drive === 'push' ? d.force / 250 + d.grip * 4 : d.speed * 1.5 + d.force / 500) - d.weight * 0.15;
   const drive = best(rng, drPool, driveScore, spread)!;
+  // brain: the sharpest the team can field, leaning to quirks that suit the plan
+  const brain = best(
+    rng,
+    tierFit(BRAINS),
+    (b) => b.tier * 10 + (b.trait && arch.traits.includes(b.trait) ? 6 : b.trait ? -4 : 0) - b.power * 1.5,
+    spread * 2,
+  )!;
 
   const design: BotDesign = {
     id: opts.id ?? `b${Math.floor(rng() * 1e9).toString(36)}`,
@@ -169,14 +193,16 @@ export function makeBuild(arch: Archetype, tier: number, rng: Rng, opts: BuildOp
     top: top?.id ?? null,
     armor: { material: 'ar_alu', front: 0, sides: 0, rear: 0, top: 0 },
     modules: [],
-    power: { drive: 1, front: 1, top: 1, aux: 1 },
+    brain: brain.id,
+    power: { drive: 1, front: 1, top: 1, aux: 1, brain: 1 },
+    plan: { ...arch.plan },
     paint: opts.paint ?? { primary: '#d9d9d9', secondary: '#333333', pattern: 'plain' },
   };
 
   // core: enough power for everything, as light as possible
   const rated = () => {
     const r = ratedDraw(design);
-    return r.drive + r.front + r.top + r.aux;
+    return r.drive + r.front + r.top + r.aux + r.brain;
   };
   const corePool = tierFit(CORES);
   const pickCore = () => {
@@ -210,6 +236,7 @@ export function makeBuild(arch: Archetype, tier: number, rng: Rng, opts: BuildOp
   while (designWeight(design) > WEIGHT_LIMIT) {
     if (design.modules.length) design.modules.pop();
     else if (design.top && design.front) design.top = null;
+    else if (brainOf(design.brain).weight > 1) design.brain = tierFit(BRAINS).sort((a, b) => a.weight - b.weight)[0].id;
     else {
       const lighter = corePool.filter((c) => c.weight < coreOf(design.core).weight).sort((a, b) => b.output - a.output)[0];
       if (lighter) design.core = lighter.id;
@@ -249,15 +276,18 @@ export function makeBuild(arch: Archetype, tier: number, rng: Rng, opts: BuildOp
 
 /**
  * Share the core between systems: 100% each if it can, spare power spent on
- * overvolting the weapon (or drive), or cuts spread by priority if short.
+ * overvolting the weapon (or drive), or cuts spread by priority if short,
+ * never below what a part needs to run.
  */
 export function allocate(d: BotDesign, weaponBias: number, outputOverride?: number): PowerSplit {
   const r = ratedDraw(d);
+  const mins = minShares(d);
   const out = outputOverride ?? coreOf(d.core).output;
-  const p: PowerSplit = { drive: 1, front: r.front ? 1 : 1, top: r.top ? 1 : 1, aux: 1 };
-  const draw = () => r.drive * p.drive + r.front * p.front + r.top * p.top + r.aux * p.aux;
-  let spare = out - draw();
+  const p: PowerSplit = { drive: 1, front: 1, top: 1, aux: 1, brain: 1 };
+  const draw = () => powerDraw(d, p);
   const snap = (v: number) => Math.round(v * 20) / 20;
+  const up = (v: number) => Math.ceil(v * 20 - 1e-9) / 20;
+  let spare = out - draw();
   if (spare >= 0) {
     // overvolt a little with what is left, as far as the cooling keeps up
     const cooling = coreOf(d.core).cooling * (d.modules.some((m) => moduleOf(m).effect === 'heatsink') ? 1.6 : 1);
@@ -275,27 +305,26 @@ export function allocate(d: BotDesign, weaponBias: number, outputOverride?: numb
     const kd = Math.min(0.15, (toD / r.drive) * 0.5, Math.max(0, heatRoom) / (OVERVOLT_HEAT * r.drive));
     p.drive = snap(Math.min(MAX_POWER, 1 + kd));
   } else {
-    // short: cut the less important side first
-    const order: Array<keyof PowerSplit> = weaponBias >= 0.5 ? ['aux', 'drive', 'top', 'front'] : ['aux', 'top', 'front', 'drive'];
-    for (const k of order) {
-      if (spare >= 0) break;
-      const kw = r[k];
-      if (!kw) continue;
-      const floor = k === 'drive' ? 0.6 : 0.5;
-      const cut = Math.min(p[k] - floor, -spare / kw);
-      p[k] = p[k] - cut;
-      spare += cut * kw;
+    // short: cut the less important side first, then everything to its minimum
+    const order: PowerKey[] = weaponBias >= 0.5 ? ['aux', 'drive', 'top', 'front', 'brain'] : ['aux', 'top', 'front', 'drive', 'brain'];
+    for (const pass of [0, 1]) {
+      for (const k of order) {
+        if (spare >= 0 || !r[k]) continue;
+        const floor = pass === 0 ? Math.max(up(mins[k]), k === 'drive' ? 0.6 : k === 'brain' ? 0.8 : 0.5) : up(mins[k]);
+        const cut = Math.max(0, Math.min(p[k] - floor, -spare / r[k]));
+        p[k] -= cut;
+        spare += cut * r[k];
+      }
     }
-    if (spare < 0) {
-      const k = out / draw();
-      for (const key of Object.keys(p) as Array<keyof PowerSplit>) p[key] *= k;
-    }
-    for (const key of Object.keys(p) as Array<keyof PowerSplit>) p[key] = Math.floor(p[key] * 20) / 20;
+    for (const k of POWER_KEYS) p[k] = Math.max(up(mins[k]), Math.floor(p[k] * 20 + 1e-6) / 20);
   }
-  p.drive = Math.max(MIN_DRIVE_POWER, p.drive);
-  // never over budget after rounding
-  while (draw() > out + 1e-9 && p.drive > MIN_DRIVE_POWER) p.drive = Math.round((p.drive - 0.05) * 20) / 20;
-  while (draw() > out + 1e-9 && p.front > 0) p.front = Math.round((p.front - 0.05) * 20) / 20;
+  // never over budget after rounding: trim toward the minimums, and as a last
+  // resort switch the top weapon off, then the front
+  for (const k of ['drive', 'top', 'front'] as PowerKey[]) {
+    while (draw() > out + 1e-9 && r[k] && p[k] - 0.05 >= up(mins[k]) - 1e-9) p[k] = Math.round((p[k] - 0.05) * 20) / 20;
+  }
+  if (draw() > out + 1e-9 && r.top) p.top = 0;
+  if (draw() > out + 1e-9 && r.front) p.front = 0;
   return p;
 }
 

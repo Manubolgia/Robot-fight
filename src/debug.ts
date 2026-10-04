@@ -5,7 +5,7 @@ import { onThumbsReady, thumb } from './render/thumbs.ts';
 
 const base: BotDesign = {
   id: 'x', name: 'x', chassis: 'ch_bulldog', drive: 'dr_quad', core: 'co_lead', front: null, top: null,
-  armor: { material: 'ar_titanium', front: 2, sides: 2, rear: 1, top: 1 }, modules: [], power: { drive: 1, front: 1, top: 1, aux: 1 },
+  armor: { material: 'ar_titanium', front: 2, sides: 2, rear: 1, top: 1 }, modules: [], brain: 'br_relay', power: { drive: 1, front: 1, top: 1, aux: 1, brain: 1 }, plan: { stance: 'balanced', approach: 'direct', hazards: true },
   paint: { primary: '#ff7a1a', secondary: '#1d3557', pattern: 'stripes' },
 };
 const items: Array<[string, BotDesign]> = [];

@@ -12,6 +12,8 @@ import { DMG_SCALE, G, ramDamage, type BotStats, type WeaponStats } from './stat
 export const DT = 1 / 120;
 export const FIGHT_TIME = 90;
 export const COUNT_OUT = 10;
+/** crushing damage per second per point of a wedge's ram value, pinned against a wall */
+const PIN_DPS = 60;
 const KNOCK = 0.6;
 /** a hit at least this big gets the sparks, the shake and the crowd */
 export const BIG_HIT = 60;
@@ -41,6 +43,8 @@ export interface WeaponState {
   hitCd: number;
   spin: number;
   sparkT: number;
+  /** how long the target has sat in the striking zone, for the brain's timing */
+  zoneT: number;
 }
 
 export type CompKey = 'drive' | 'front' | 'top' | 'core';
@@ -90,6 +94,8 @@ export interface Bot {
   ko: false | 'destroyed' | 'countout' | 'pit';
   ctl: Controls;
   auto: boolean;
+  /** seconds the brain takes to fire once the target is lined up */
+  trigger: number;
   speed: number;
   // cooldowns
   ramCd: number;
@@ -135,6 +141,7 @@ export type SimEvent =
   | { type: 'wall'; bot: number; speed: number; x: number; y: number }
   | { type: 'hazard'; kind: 'saw' | 'hammer' | 'flame' | 'spikes'; x: number; y: number; bot: number }
   | { type: 'boost'; bot: number }
+  | { type: 'reboot'; bot: number }
   | { type: 'time' };
 
 export interface JudgeCard {
@@ -237,6 +244,7 @@ function newWeapon(w: WeaponStats | null, compFrac: number): WeaponState | null 
     hitCd: 0,
     spin: 0,
     sparkT: 0,
+    zoneT: 0,
   };
 }
 
@@ -301,6 +309,7 @@ function makeBot(idx: number, s: BotStats, x: number, y: number, th: number, wea
     ko: false,
     ctl: { throttle: 0, turn: 0, strafe: 0, fire: false, fireTop: false, boost: false },
     auto: true,
+    trigger: 0,
     speed: 0,
     ramCd: 0,
     thornsCd: 0,
@@ -479,7 +488,7 @@ export class World {
 
     // heat: overvolted systems at work, cooling, flames
     const working = Math.min(1, Math.abs(b.ctl.throttle) + Math.abs(b.ctl.turn) * 0.5);
-    let heat = b.s.driveHeat * working;
+    let heat = b.s.driveHeat * working + b.s.brainHeat;
     for (const ws of [b.front, b.top]) {
       if (!ws) continue;
       const busy = ws.w.def.energy ? ws.energy < ws.w.energyMax * 0.98 : ws.reload > 0 || ws.firing || ws.holding;
@@ -802,11 +811,18 @@ export class World {
     if (!frontOn || a.airborne || a.ko) return;
     const zone = this.zoneFrom(b, px, py);
     const under = this.under(a, b, zone);
+    const fw = a.front;
     if (a.s.frontWedge > 0.05 && under > 0.62 && !b.airborne && this.weaponsUsable(a)) {
       b.wedged = 0.3;
       b.wedgeK = Math.max(b.wedgeK, a.s.frontWedge * under);
+      // shoved up against a wall or into a hazard on a wedge: crushed there
+      const lim = this.half - b.s.radius - 0.2;
+      const pinned = Math.abs(b.x) > lim || Math.abs(b.y) > lim || this.hazardAt(b.x, b.y, 0.2) > 0;
+      if (pinned && fw && fw.w.def.type === 'wedge' && a.ctl.throttle > 0.3) {
+        this.damage(b, PIN_DPS * fw.w.ram * b.wedgeK * DT, 'kinetic', zone, a.idx, { kind: 'wedge', quiet: true });
+        a.control += DT * 1.2;
+      }
     }
-    const fw = a.front;
     // a ram hurts as much as you drive into them: being thrown onto it does not count
     const drive = Math.min(approach, a.s.driveSpeed * (1 + a.s.boostMult) * 1.1);
     if (fw && fw.w.ram > 0 && drive > 1.2 && a.ramCd <= 0 && this.weaponsUsable(a)) {
@@ -981,6 +997,12 @@ export class World {
     return ws.w.slot === 'front' ? a.ctl.fire : a.ctl.fireTop;
   }
 
+  /** Auto-fire once the target has been lined up for as long as the brain needs to react. */
+  private lined(a: Bot, ws: WeaponState, target: boolean, dt: number) {
+    ws.zoneT = target ? ws.zoneT + dt : 0;
+    return a.auto && target && ws.zoneT >= a.trigger;
+  }
+
   private spinner(a: Bot, b: Bot, ws: WeaponState, on: boolean, wf: number, ps: number, dt: number) {
     const w = ws.w;
     const cap = w.energyMax * wf * (a.overheated ? 0.7 : 1);
@@ -1034,6 +1056,8 @@ export class World {
     const def = w.def;
     let f = (def.bite ?? 0.5) * (0.72 + 0.28 * Math.min(1, closing / 2.5));
     if (b.airborne) f *= 0.6;
+    // tipped up on a wedge, a bar, ring or drum bites air
+    if (a.wedged > 0 && def.type !== 'vspin') f *= 1 - 0.55 * a.wedgeK;
     const et = ws.energy * f;
     ws.energy -= et;
     let dmg = (et / 1000) * w.perKJ;
@@ -1105,8 +1129,7 @@ export class World {
     ws.anim = Math.max(0, ws.anim - dt * 2.5);
     if (!on || ws.reload > 0 || a.airborne) return;
     const target = !b.inPit && !b.airborne && b.z < 0.2 && this.inZone(a, b, ws);
-    const auto = a.auto && target;
-    if (!(this.wants(a, ws) || auto)) return;
+    if (!(this.wants(a, ws) || this.lined(a, ws, target, dt))) return;
     ws.reload = w.reload;
     ws.anim = 1;
     this.emit({ type: 'fire', bot: a.idx, slot: w.slot, weapon: w.def.type, miss: !target, x: a.x, y: a.y });
@@ -1180,7 +1203,7 @@ export class World {
     ws.anim = Math.max(0, ws.anim - dt * 2);
     if (!on || ws.reload > 0 || a.airborne) return;
     const target = !b.inPit && !b.airborne && b.z < 0.2 && b.heldBy < 0 && this.inZone(a, b, ws);
-    if (!(this.wants(a, ws) || (a.auto && target))) return;
+    if (!(this.wants(a, ws) || this.lined(a, ws, target, dt))) return;
     if (!target) {
       ws.reload = 0.6;
       ws.anim = 1;
@@ -1246,7 +1269,7 @@ export class World {
     }
     if (!on || ws.reload > 0 || a.airborne) return;
     const target = !b.inPit && b.z < 0.3 && this.inZone(a, b, ws, -0.02);
-    if (!(this.wants(a, ws) || (a.auto && target))) return;
+    if (!(this.wants(a, ws) || this.lined(a, ws, target, dt))) return;
     ws.strikeT = 0.16;
     ws.reload = w.reload;
     this.emit({ type: 'fire', bot: a.idx, slot: w.slot, weapon: w.def.type, miss: !target, x: a.x, y: a.y });
@@ -1302,7 +1325,7 @@ export class World {
     ws.anim = Math.max(0, ws.anim - dt * 1.5);
     if (!on || ws.reload > 0 || a.airborne) return;
     const target = !b.inPit && !b.airborne && b.liftedBy < 0 && this.inZone(a, b, ws, -0.03);
-    if (!(this.wants(a, ws) || (a.auto && target))) return;
+    if (!(this.wants(a, ws) || this.lined(a, ws, target, dt))) return;
     ws.windup = 0.3;
     this.emit({ type: 'fire', bot: a.idx, slot: w.slot, weapon: w.def.type, miss: !target, x: a.x, y: a.y });
   }
@@ -1331,7 +1354,7 @@ export class World {
   private flame(a: Bot, b: Bot, ws: WeaponState, on: boolean, wf: number, dt: number) {
     const w = ws.w;
     const target = on && !b.inPit && this.inZone(a, b, ws);
-    const want = this.wants(a, ws) || (a.auto && target);
+    const want = this.wants(a, ws) || this.lined(a, ws, target, dt);
     ws.firing = on && want && ws.fuel > 0 && !a.airborne;
     if (!ws.firing) return;
     ws.fuel -= dt;

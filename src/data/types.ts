@@ -5,7 +5,7 @@ export type DmgType = 'kinetic' | 'pierce' | 'cut' | 'thermal';
 export type ArmorZone = 'front' | 'sides' | 'rear' | 'top';
 /** Where a hit lands on a robot. Sides are tracked separately in a fight. */
 export type HitZone = 'front' | 'left' | 'right' | 'rear' | 'top';
-export type PartKind = 'chassis' | 'drive' | 'core' | 'weapon' | 'armor' | 'module';
+export type PartKind = 'chassis' | 'drive' | 'core' | 'weapon' | 'armor' | 'module' | 'brain';
 
 export interface PartBase {
   id: string;
@@ -169,7 +169,31 @@ export interface ModuleDef extends PartBase {
   value?: number;
 }
 
-export type PartDef = ChassisDef | DriveDef | CoreDef | WeaponDef | ArmorDef | ModuleDef;
+/**
+ * A brain's quirk. Reckless ones never back off; cautious ones keep their
+ * guard up and avoid trouble; hunters go for the sides and rear; adaptive ones
+ * read the other robot and strike right after it commits.
+ */
+export type BrainTrait = 'reckless' | 'cautious' | 'hunter' | 'adaptive';
+
+/** The control board that fights the robot. Smarter ones draw more power. */
+export interface BrainDef extends PartBase {
+  kind: 'brain';
+  /** rated draw, kW */
+  power: number;
+  /** below this share of its rated draw it browns out and reboots */
+  minPower: number;
+  /** seconds between decisions at full power */
+  reaction: number;
+  /** 0..1 steering precision, lead and weapon timing */
+  aim: number;
+  /** 0..1 how well it reads the arena: avoids hazards, uses them */
+  awareness: number;
+  trait?: BrainTrait;
+  durability: number;
+}
+
+export type PartDef = ChassisDef | DriveDef | CoreDef | WeaponDef | ArmorDef | ModuleDef | BrainDef;
 
 export interface Paint {
   primary: string;
@@ -184,7 +208,20 @@ export interface PowerSplit {
   front: number;
   top: number;
   aux: number;
+  brain: number;
 }
+
+/** How the brain is told to fight. */
+export interface BattlePlan {
+  /** aggressive presses with a half-ready weapon and never backs off */
+  stance: 'aggressive' | 'balanced' | 'defensive';
+  /** straight at them, round to their side, or wait for them to commit */
+  approach: 'direct' | 'flank' | 'counter';
+  /** shove them into the hazards when it can, or fight in the open */
+  hazards: boolean;
+}
+
+export const DEFAULT_PLAN: BattlePlan = { stance: 'balanced', approach: 'direct', hazards: true };
 
 export interface BotDesign {
   id: string;
@@ -196,7 +233,9 @@ export interface BotDesign {
   top: string | null;
   armor: { material: string } & Record<ArmorZone, number>;
   modules: string[];
+  brain: string;
   power: PowerSplit;
+  plan: BattlePlan;
   paint: Paint;
 }
 

@@ -1,8 +1,11 @@
-// Robot drivers. Each one reads the fight and works the same controls a
-// player does. Tactics follow the robot's main weapon; skill sets how fast
-// they react, how well they aim and how much they respect the hazards.
+// Robot brains. Each one reads the fight and works the robot's controls: no
+// one drives in the arena. Tactics follow the robot's main weapon and the
+// battle plan its team gave it; the brain part sets how fast it reacts, how
+// well it aims and times its weapon and how much it respects the hazards, and
+// all of that depends on the power that actually reaches it.
 
 import { mulberry32, type Rng } from './rng.ts';
+import { mindAt } from './stats.ts';
 import type { Bot, WeaponState, World } from './world.ts';
 
 export interface Skill {
@@ -16,28 +19,12 @@ export interface Skill {
   hazardIQ: number;
 }
 
-export const SKILL_BY_TIER: Record<number, Skill> = {
-  1: { reaction: 0.36, aim: 0.5, aggression: 0.45, hazardIQ: 0.3 },
-  2: { reaction: 0.28, aim: 0.62, aggression: 0.55, hazardIQ: 0.5 },
-  3: { reaction: 0.22, aim: 0.74, aggression: 0.62, hazardIQ: 0.66 },
-  4: { reaction: 0.16, aim: 0.84, aggression: 0.68, hazardIQ: 0.8 },
-  5: { reaction: 0.12, aim: 0.92, aggression: 0.72, hazardIQ: 0.9 },
-};
+const STANCE_AGGRESSION = { aggressive: 0.85, balanced: 0.6, defensive: 0.35 };
+/** frozen while a starved brain reboots, then a moment before it can brown out again */
+export const REBOOT_TIME = 0.8;
+const REBOOT_GRACE = 1.6;
 
-export const PILOT_SKILL: Skill = { reaction: 0.12, aim: 0.9, aggression: 0.65, hazardIQ: 0.9 };
-
-export function skillFor(tier: number, season = 1, rival = false): Skill {
-  const base = SKILL_BY_TIER[Math.max(1, Math.min(5, tier))];
-  const k = Math.min(0.15, (season - 1) * 0.04) + (rival ? 0.05 : 0);
-  return {
-    reaction: Math.max(0.08, base.reaction * (1 - k)),
-    aim: Math.min(0.98, base.aim + k),
-    aggression: Math.min(0.9, base.aggression + k * 0.5),
-    hazardIQ: Math.min(0.98, base.hazardIQ + k),
-  };
-}
-
-type Mode = 'attack' | 'retreat' | 'flank' | 'push' | 'hold' | 'wait' | 'backoff' | 'carry' | 'unstick' | 'escape';
+type Mode = 'attack' | 'retreat' | 'flank' | 'push' | 'hold' | 'wait' | 'backoff' | 'carry' | 'unstick' | 'escape' | 'stalk';
 
 const TAU = Math.PI * 2;
 const wrap = (a: number) => {
@@ -80,18 +67,77 @@ export class Driver {
   private flankSide = 1;
   /** whether this decision noticed the hazards ahead */
   private notice = true;
+  /** time spent circling for a flank, and waiting for an opening, since the last clash */
+  private flankT = 0;
+  private stalkT = 0;
+  /** a starved brain: frozen while it reboots */
+  private rebootT = 0;
+  private graceT = 0;
 
   private world: World;
   readonly idx: number;
-  skill: Skill;
+  skill: Skill = { reaction: 0.3, aim: 0.5, aggression: 0.6, hazardIQ: 0.5 };
 
-  constructor(world: World, idx: number, skill: Skill, seed = 7) {
+  constructor(world: World, idx: number, seed = 7) {
     this.world = world;
     this.idx = idx;
-    this.skill = skill;
     this.rng = mulberry32(seed * 7919 + idx);
     this.noise = this.rng() * 100;
     this.flankSide = this.rng() < 0.5 ? 1 : -1;
+    this.refresh();
+  }
+
+  /** What the brain is up to, in a word or two for the HUD. */
+  get intent(): string {
+    if (this.rebootT > 0) return 'Rebooting';
+    switch (this.mode) {
+      case 'attack':
+        return this.boost ? 'Charging' : 'Attacking';
+      case 'retreat': {
+        const m = this.mainWeapon();
+        return m && SPINNERS.has(m.w.def.type) && m.energy < m.w.energyMax * 0.9 ? 'Spinning up' : 'Backing off';
+      }
+      case 'flank':
+        return 'Flanking';
+      case 'push':
+        return 'Pushing';
+      case 'hold':
+        return 'Lining up';
+      case 'wait':
+        return 'Waiting';
+      case 'backoff':
+        return 'Run-up';
+      case 'carry':
+        return 'Carrying';
+      case 'unstick':
+        return 'Unsticking';
+      case 'escape':
+        return 'Escaping';
+      case 'stalk':
+        return 'Biding time';
+    }
+  }
+
+  get rebooting(): boolean {
+    return this.rebootT > 0;
+  }
+
+  /** Share of its rated draw reaching the brain right now. */
+  private brainPower(): number {
+    return this.me.s.mind.p * this.world.powerScale(this.me);
+  }
+
+  /** Re-read the brain at the power it is getting, and the plan it is following. */
+  private refresh() {
+    const me = this.me;
+    const mind = me.s.mind;
+    const m = mindAt(mind, Math.max(this.brainPower(), mind.min));
+    let agg = STANCE_AGGRESSION[mind.plan.stance];
+    if (mind.trait === 'reckless') agg = Math.min(0.97, agg + 0.25);
+    if (mind.trait === 'cautious') agg = Math.max(0.2, agg - 0.1);
+    this.skill = { reaction: m.reaction, aim: m.aim, aggression: agg, hazardIQ: m.awareness };
+    // a sharp brain fires the instant the target lines up; a dull one hesitates
+    me.trigger = (1 - m.aim) * 0.45 + m.reaction * 0.15;
   }
 
   get me(): Bot {
@@ -105,20 +151,52 @@ export class Driver {
   /** Call every simulation step. */
   update(dt: number) {
     const me = this.me;
-    me.auto = true;
     if (this.world.over) {
       me.ctl.throttle = 0;
       me.ctl.turn = 0;
       me.ctl.strafe = 0;
       return;
     }
+    // a brain starved below its minimum (a damaged core, an overheat) browns out
+    this.graceT = Math.max(0, this.graceT - dt);
+    if (this.rebootT > 0) {
+      this.rebootT -= dt;
+      if (this.rebootT <= 0) this.graceT = REBOOT_GRACE;
+      this.freeze();
+      return;
+    }
+    if (this.graceT <= 0 && !me.ko && this.brainPower() < me.s.mind.min - 1e-9) {
+      this.rebootT = REBOOT_TIME;
+      this.world.emit({ type: 'reboot', bot: this.idx });
+      this.freeze();
+      return;
+    }
+    me.auto = true;
     this.watchStuck(dt);
+    if (this.mode === 'stalk') this.stalkT += dt;
+    if (this.mode === 'flank') this.flankT += dt;
+    if (this.touching()) {
+      this.stalkT = Math.max(0, this.stalkT - dt * 2);
+      this.flankT = 0;
+    }
     this.next -= dt;
     if (this.next <= 0) {
+      this.refresh();
       this.next = this.skill.reaction * (0.75 + this.rng() * 0.5);
       this.think();
     }
     this.steer();
+  }
+
+  private freeze() {
+    const c = this.me.ctl;
+    this.me.auto = false;
+    c.throttle = 0;
+    c.turn = 0;
+    c.strafe = 0;
+    c.fire = false;
+    c.fireTop = false;
+    c.boost = false;
   }
 
   // ---- deciding --------------------------------------------------------------
@@ -135,7 +213,9 @@ export class Driver {
     const me = this.me;
     const op = this.op;
     if (!w.mobile(me)) return;
-    this.notice = this.rng() < 0.25 + this.skill.hazardIQ * 0.75;
+    const mind = me.s.mind;
+    const careful = !mind.plan.hazards || mind.trait === 'cautious';
+    this.notice = this.rng() < 0.25 + this.skill.hazardIQ * 0.75 + (careful ? 0.2 : 0);
     if (this.unstickT > 0) {
       this.mode = 'unstick';
       return;
@@ -165,13 +245,24 @@ export class Driver {
     const main = this.mainWeapon();
     const type = main?.w.def.type ?? 'wedge';
     const danger = this.opDanger();
+    // aggressive stances and reckless brains never give ground
+    const neverBack = mind.plan.stance === 'aggressive' || mind.trait === 'reckless';
+    const [ax, ay] = this.aimPoint(op, px, py);
+
+    // a defensive brain losing the exchange keeps clear while its weapon is not ready
+    if (!neverBack && (mind.plan.stance === 'defensive' || mind.trait === 'cautious') && danger && dist < 2.6 && !this.ready(main) && this.losing()) {
+      this.mode = 'retreat';
+      this.setRetreat(1.8);
+      return;
+    }
 
     if (main && SPINNERS.has(type)) {
       const ef = main.energy / Math.max(1, main.w.energyMax);
       const need = (type === 'ring' ? 0.7 : 0.62) - 0.25 * this.skill.aggression;
       if (ef >= need || (dist < 1.1 && ef > 0.22)) {
+        if (type !== 'ring' && this.approachFirst(op, dist)) return;
         this.mode = 'attack';
-        this.target(px, py);
+        this.target(ax, ay);
         this.boost = dist > 1.4 && dist < 4 && ef > 0.8;
       } else {
         this.mode = 'retreat';
@@ -190,11 +281,12 @@ export class Driver {
       if (danger && dist < 3.2 && this.skill.hazardIQ > 0.25) {
         this.mode = 'flank';
         this.flank(op, 1.25);
-        if (Math.abs(this.opFacing()) > 1.3) this.target(px, py);
+        if (Math.abs(this.opFacing()) > 1.3) this.target(ax, ay);
         return;
       }
+      if (this.approachFirst(op, dist)) return;
       this.mode = 'attack';
-      this.target(px, py);
+      this.target(ax, ay);
       this.boost = dist > 1.5 && dist < 3.5 && main != null && main.reload <= 0;
       return;
     }
@@ -206,13 +298,14 @@ export class Driver {
         this.target(hx, hy);
         return;
       }
-      if (danger && dist < 3 && main && main.reload > 0.4) {
+      if (!neverBack && danger && dist < 3 && main && main.reload > 0.4) {
         this.mode = 'retreat';
         this.setRetreat(1.8);
         return;
       }
+      if (this.approachFirst(op, dist)) return;
       this.mode = 'attack';
-      this.target(px, py);
+      this.target(ax, ay);
       return;
     }
 
@@ -223,13 +316,14 @@ export class Driver {
         this.pushPlan(op);
         return;
       }
-      if (danger && main!.reload > 0.5 && dist < 2.5) {
+      if (!neverBack && danger && main!.reload > 0.5 && dist < 2.5) {
         this.mode = 'retreat';
         this.setRetreat(1.5);
         return;
       }
+      if (dist > reach && this.approachFirst(op, dist)) return;
       this.mode = dist < reach ? 'hold' : 'attack';
-      this.target(px, py);
+      this.target(ax, ay);
       if (this.mode === 'hold') this.throttle = 0.15;
       return;
     }
@@ -248,8 +342,9 @@ export class Driver {
         this.pushPlan(op);
         return;
       }
+      if (this.approachFirst(op, dist)) return;
       this.mode = 'attack';
-      this.target(px, py);
+      this.target(ax, ay);
       this.boost = dist > 1.3 && dist < 4.5;
       return;
     }
@@ -260,7 +355,7 @@ export class Driver {
         return;
       }
       this.mode = 'attack';
-      this.target(px, py);
+      this.target(ax, ay);
       return;
     }
 
@@ -268,8 +363,89 @@ export class Driver {
     this.pushPlan(op);
   }
 
+  /**
+   * Before an attack: circle round to their side while they face us (flank
+   * plans, hunters), or hold off until they commit (counter plans, adaptive
+   * brains). Never for long: the judges score aggression. True if it chose to.
+   */
+  private approachFirst(op: Bot, dist: number): boolean {
+    const mind = this.me.s.mind;
+    const ringOp = op.front?.w.def.type === 'ring';
+    if ((mind.plan.approach === 'flank' || mind.trait === 'hunter') && !ringOp && dist > 1.0 && dist < 5 && Math.abs(this.opFacing()) < 1.1 && this.flankT < 3) {
+      this.mode = 'flank';
+      this.flank(op, clamp(dist * 0.8, 1.2, 2));
+      return true;
+    }
+    const patience = mind.plan.approach === 'counter' ? 5 : mind.trait === 'adaptive' ? 2.5 : 0;
+    if (patience > 0 && dist > 1.5 && this.stalkT < patience && !this.opCommitted()) {
+      this.mode = 'stalk';
+      this.stalk(op);
+      return true;
+    }
+    return false;
+  }
+
+  /** Has the other robot committed: charging in, or its weapon spent? */
+  private opCommitted(): boolean {
+    const me = this.me;
+    const op = this.op;
+    const dx = me.x - op.x;
+    const dy = me.y - op.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if ((op.vx * dx + op.vy * dy) / d > 1.2) return true;
+    const w = op.front && op.front.w.def.type !== 'wedge' && op.comp.front > 0 ? op.front : op.top && op.comp.top > 0 ? op.top : null;
+    if (!w || w.w.def.power === 0) return true;
+    if (w.w.energyMax > 0) return w.energy < w.w.energyMax * 0.45;
+    return w.reload > 0.4 || w.holding;
+  }
+
+  /** Hold off at a striking distance, circling slowly, weapon toward them. */
+  private stalk(op: Bot) {
+    const me = this.me;
+    const R = 2.3;
+    const a = Math.atan2(me.y - op.y, me.x - op.x) + 0.35 * this.flankSide;
+    const h = this.world.half - 1;
+    this.tx = clamp(op.x + Math.cos(a) * R, -h, h);
+    this.ty = clamp(op.y + Math.sin(a) * R, -h, h);
+    this.faceX = op.x;
+    this.faceY = op.y;
+    const far = Math.hypot(this.tx - me.x, this.ty - me.y);
+    this.reverse = false;
+    this.throttle = far > 0.45 ? 0.55 : 0;
+    this.boost = false;
+  }
+
+  /** Where to strike: hunters go for the flank nearest them. */
+  private aimPoint(op: Bot, px: number, py: number): [number, number] {
+    if (this.me.s.mind.trait !== 'hunter') return [px, py];
+    const side = wrap(Math.atan2(this.me.y - op.y, this.me.x - op.x) - op.th) > 0 ? 1 : -1;
+    const a = op.th + (side * Math.PI) / 2;
+    const r = op.s.radius * 0.6;
+    return [px + Math.cos(a) * r, py + Math.sin(a) * r];
+  }
+
+  private ready(w: WeaponState | null): boolean {
+    if (!w) return false;
+    if (w.w.energyMax > 0) return w.energy > w.w.energyMax * 0.6;
+    return w.reload <= 0 && !w.holding;
+  }
+
+  private losing(): boolean {
+    const me = this.me;
+    const op = this.op;
+    return me.hp / me.s.hpMax < op.hp / op.s.hpMax - 0.1;
+  }
+
   private pushPlan(op: Bot) {
     const me = this.me;
+    // a live spinner: meet it front-on, where the wedge deflects it, and get under
+    const spin = op.front && SPINNERS.has(op.front.w.def.type) && op.comp.front > 0 && op.front.energy > op.front.w.energyMax * 0.3;
+    if (spin && me.s.frontWedge > 0.5 && !this.touching()) {
+      this.mode = 'push';
+      this.target(op.x, op.y);
+      this.boost = Math.hypot(op.x - me.x, op.y - me.y) < 2.5;
+      return;
+    }
     const [gx, gy] = this.hazardGoal(op);
     let ux = gx - op.x;
     let uy = gy - op.y;
@@ -301,6 +477,11 @@ export class Driver {
     const ar = w.arena;
     const h = w.half;
     const opts: Array<[number, number, number]> = [];
+    const wx = op.x > 0 ? h : -h;
+    const wy = op.y > 0 ? h : -h;
+    const wall: [number, number, number] = Math.abs(op.x) > Math.abs(op.y) ? [wx, op.y, 0.5] : [op.x, wy, 0.5];
+    // told to fight in the open: pin them on a plain wall at most
+    if (!this.me.s.mind.plan.hazards) return [wall[0], wall[1]];
     if (ar.pit && (w.pitOpen || w.t + 4 > ar.pit.opensAt)) opts.push([ar.pit.x, ar.pit.y, 3]);
     for (const s of ar.saws ?? []) opts.push([s.x, s.y, 1.2]);
     if (ar.hammer) opts.push([ar.hammer.x, ar.hammer.y, 1.4]);
@@ -313,9 +494,7 @@ export class Driver {
       if (sp.side === 'w') opts.push([-h, mid, 1.1]);
     }
     // plain walls
-    const wx = op.x > 0 ? h : -h;
-    const wy = op.y > 0 ? h : -h;
-    opts.push(Math.abs(op.x) > Math.abs(op.y) ? [wx, op.y, 0.5] : [op.x, wy, 0.5]);
+    opts.push(wall);
     let best = opts[opts.length - 1];
     let bestScore = -Infinity;
     for (const o of opts) {
@@ -491,7 +670,7 @@ export class Driver {
     const look = 0.6 + me.speed * 0.35;
     const probe = (a: number) => w.hazardAt(me.x + Math.cos(a) * look, me.y + Math.sin(a) * look, me.s.radius * 0.6);
     // carrying or pushing an opponent into a hazard: keep going
-    if (this.mode === 'carry' || (this.mode === 'push' && this.touching())) {
+    if (this.me.s.mind.plan.hazards && (this.mode === 'carry' || (this.mode === 'push' && this.touching()))) {
       const d = probe(goal);
       if (d < 2.5 || this.mode === 'carry') return goal;
     }

@@ -58,7 +58,7 @@ export function QuickFight() {
         </div>
         <div class="section-title">Opponent</div>
         <div class="label" style={{ marginBottom: '6px' }}>
-          Tier (parts and driving skill)
+          Tier (parts and brains)
         </div>
         <div class="seg">
           {[1, 2, 3, 4, 5].map((n) => (
@@ -148,9 +148,6 @@ export function Settings() {
             sfx.setEnabled(v);
           })}
           {row('Vibration', 'Buzz on hits (where supported)', s.haptics, (v) => setSettings({ haptics: v }))}
-          {row('Auto-fire', 'Weapons fire by themselves when the target is in range', s.autoFire, (v) => setSettings({ autoFire: v }))}
-          {row('Aim assist', 'Steer gently onto the opponent', s.assist, (v) => setSettings({ assist: v }))}
-          {row('Left-handed', 'Swap the stick and the buttons', s.lefty, (v) => setSettings({ lefty: v }))}
           {row('Damage numbers', 'Show how hard each hit lands', s.numbers, (v) => setSettings({ numbers: v }))}
           <div class="row" style={{ padding: '12px 0', borderTop: '1px solid var(--line)' }}>
             <div class="grow">
@@ -231,15 +228,21 @@ export function HowTo() {
       <TopBar title="How to play" back={a.career ? 'hub' : 'title'} right={<span />} />
       <div class="scroll pad-bottom">
         {sec(
-          'Driving',
+          'You build, the robot fights',
           <>
-            Put your left thumb down anywhere on the left of the screen and push where you want to go: <b>up the screen is north</b>. Your robot turns that way and drives, or backs up if the direction is behind it, keeping its weapon on the action. <b>FIRE</b> triggers your front weapon, <b>TOP</b> the top one, <b>BOOST</b> is a short surge of speed. With auto-fire on, weapons strike by themselves when the target is in range. <b>AUTO</b> hands the driving to your pit crew.
+            Nobody drives in the arena. You design the robot, split its power and give it a <b>battle plan</b>; its <b>brain</b> does the rest. A sharper brain reacts sooner, aims and times its weapon better and reads the hazards, but it draws power your weapons and wheels could have had. Watch at 1×, 2× or 4×, or skip straight to the result.
           </>,
         )}
         {sec(
           'Weight and power',
           <>
-            Every robot must weigh <b>100 kg or less</b>. Heavier parts are stronger, but heavy robots accelerate and turn slowly, and every plate of armour costs weight. Your <b>power core</b> makes a fixed number of kilowatts that your drive and weapons share: in the garage's Power tab you choose who gets what. Less power makes a system weaker; <b>overvolting</b> past 100% makes it stronger but builds heat, and an overheated robot runs at half power.
+            Every robot must weigh <b>100 kg or less</b>. Heavier parts are stronger, but heavy robots accelerate and turn slowly, and every plate of armour costs weight. Your <b>power core</b> makes a fixed number of kilowatts that the drive, the weapons, the modules and the brain share: in the garage's Power tab you choose who gets what. Less power makes a system weaker; <b>overvolting</b> past 100% makes it stronger but builds heat, and an overheated robot runs at half power. Every part also needs a <b>minimum</b>: below it a weapon is off, and a brain that drops under its minimum mid-fight (core damage, overheating) reboots, frozen for a moment.
+          </>,
+        )}
+        {sec(
+          'The battle plan',
+          <>
+            <b>Stance</b>: aggressive robots press with a half-ready weapon and never back off; defensive ones wait for clean openings. <b>Approach</b>: head-on, round to the side (flank), or hold off until the other robot commits (counter). <b>Hazards</b>: shove them into the pit and the saws, or fight in the open. Brains have quirks too: reckless, cautious, hunters and adaptive minds each bend the plan their own way.
           </>,
         )}
         {sec(

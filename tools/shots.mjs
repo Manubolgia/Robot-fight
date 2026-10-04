@@ -33,8 +33,12 @@ await page.getByRole('button', { name: /Weapons/ }).first().click();
 await shot('05-garage-weapons', 800);
 await page.getByRole('button', { name: /Armour/ }).first().click();
 await shot('06-garage-armor', 800);
+await page.getByRole('button', { name: /Brain/ }).first().click();
+await shot('07a-garage-brain', 800);
 await page.getByRole('button', { name: /Power/ }).first().click();
 await shot('07-garage-power', 800);
+await page.locator('.subtabs button', { hasText: 'Plan' }).click();
+await shot('07b-garage-plan', 800);
 await page.getByRole('button', { name: /Stats/ }).first().click();
 await shot('08-garage-stats', 800);
 await page.locator('.tabbar .tab', { hasText: 'Events' }).click();
@@ -48,18 +52,12 @@ await shot('12-prefight', 2000);
 await page.getByRole('button', { name: /Fight!/ }).click();
 await shot('13-fight-intro', 1500);
 await shot('14-fight-countdown', 2000);
-// drive at the opponent a little
-const box = await page.locator('.joy-zone').boundingBox();
-if (box) {
-  await page.mouse.move(box.x + 90, box.y + 120);
-  await page.mouse.down();
-  await page.mouse.move(box.x + 90, box.y + 60, { steps: 5 });
-}
+// the robots fight on their own: watch, speed up, skip
 await shot('15-fight-1', 3000);
 await shot('16-fight-2', 3000);
-if (box) await page.mouse.up();
-await page.getByRole('button', { name: 'Autopilot' }).click();
-await shot('17-fight-3', 6000);
-await shot('18-fight-4', 8000);
+await page.locator('.spectate .seg button', { hasText: '4×' }).click();
+await shot('17-fight-3', 4000);
+await page.locator('.spectate .skip').click();
+await shot('18-fight-end', 2500);
 console.log(errors.slice(0, 30).join('\n'));
 await browser.close();

@@ -33,9 +33,7 @@ for (let round = 0; round < 4; round++) {
   await pit.click();
   await shot(`r${round}-pit`, 1500);
   await page.getByRole('button', { name: /Fight!/ }).click();
-  await page.waitForTimeout(800);
-  await page.getByRole('button', { name: 'Autopilot' }).click();
-  await shot(`r${round}-fight-a`, 2500);
+  await shot(`r${round}-fight-a`, 3300);
   await shot(`r${round}-fight-b`, 2500);
   // wait for the results screen
   await page.getByText(/VICTORY|DEFEAT/).first().waitFor({ timeout: 180000 });

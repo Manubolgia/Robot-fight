@@ -2,7 +2,7 @@
 //   node tools/fight.ts disc wedge 3 [seed] [arena]
 import { ARCHETYPES, archetypeOf, makeBuild } from '../src/career/builds.ts';
 import { arenaOf } from '../src/data/arenas.ts';
-import { Driver, skillFor } from '../src/sim/ai.ts';
+import { Driver } from '../src/sim/ai.ts';
 import { mulberry32 } from '../src/sim/rng.ts';
 import { computeStats, validate, designWeight, powerDraw } from '../src/sim/stats.ts';
 import { World, DT } from '../src/sim/world.ts';
@@ -18,7 +18,7 @@ for (const d of [da, db]) {
   console.log('  kg', designWeight(d).toFixed(1), 'kW', powerDraw(d).toFixed(2), validate(d).map((i) => i.text).join('; '));
 }
 const w = new World(computeStats(da), computeStats(db), arenaOf(arenaId), { seed });
-const drivers = [new Driver(w, 0, skillFor(tier), seed), new Driver(w, 1, skillFor(tier), seed + 1)];
+const drivers = [new Driver(w, 0, seed), new Driver(w, 1, seed + 1)];
 let n = 0;
 const counts: Record<string, number> = {};
 while (!w.over && n < 200000) {

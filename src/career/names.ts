@@ -19,7 +19,7 @@ export interface RivalDef {
 export const RIVALS: RivalDef[] = [
   { id: 'gearheads', team: 'The Gearheads', bot: 'Torque Jr.', driver: 'Mo Gearhart', archetype: 'drum', from: 1, country: 'US',
     paint: { primary: '#2f6fed', secondary: '#f2f2f2', pattern: 'stripes' }, taunt: 'Dad built the first Torque. I built this one better.' },
-  { id: 'ironmonks', team: 'Iron Monks', bot: 'Bulldozer', driver: 'Brother Anselm', archetype: 'wedge', from: 1, country: 'IT',
+  { id: 'ironmonks', team: 'Iron Monks', bot: 'Bulldozer', driver: 'Brother Anselm', archetype: 'wedge', from: 2, country: 'IT',
     paint: { primary: '#ffc400', secondary: '#141414', pattern: 'hazard' }, taunt: 'Patience. The wall does the work.' },
   { id: 'launchlab', team: 'Launch Lab', bot: 'Catapult', driver: 'Priya Raman', archetype: 'flipper', from: 2, country: 'IN',
     paint: { primary: '#ff7b00', secondary: '#2b2d42', pattern: 'bolt' }, taunt: 'What goes up, I decide where it comes down.' },

@@ -5,7 +5,7 @@
 import { arenaOf } from '../data/arenas.ts';
 import { eventOf, type EventDef, type Format } from '../data/events.ts';
 import type { BotDesign, Wear } from '../data/types.ts';
-import { Driver, skillFor, type Skill } from '../sim/ai.ts';
+import { Driver } from '../sim/ai.ts';
 import { hashString, mulberry32, pick, shuffle, type Rng } from '../sim/rng.ts';
 import { computeStats, type Levels } from '../sim/stats.ts';
 import { DT, World, freshWear, type FightResult } from '../sim/world.ts';
@@ -19,7 +19,8 @@ export interface Entrant {
   id: string;
   team: string;
   bot: BotDesign;
-  skill: Skill;
+  /** the team's workshop: every part at this Mk (1..5) */
+  mk: number;
   country: string;
   rival?: string;
   arch: string;
@@ -96,21 +97,18 @@ function makeEntrant(rng: Rng, ev: EventDef, season: number, arch: string, taken
   const partsTier = Math.min(5, tier + (season > 2 && rng() < 0.3 ? 1 : 0));
   const name = rival ? rival.bot : botName(rng, taken);
   const bot = makeBuild(archetypeOf(arch), partsTier, rng, { name, paint: rival ? rival.paint : randomPaint(rng), quality });
-  const skill = skillFor(tier, season, !!rival);
-  if (!rival) {
-    const k = (rng() - 0.5) * 0.12;
-    skill.aim = Math.max(0.3, Math.min(0.98, skill.aim + k));
-    skill.reaction = Math.max(0.08, skill.reaction * (1 - k));
-  }
+  // later seasons the teams have upgraded their parts; rivals are a mark ahead
+  const mk = Math.min(5, 1 + Math.max(0, season - 1) + (rival ? 1 : 0));
+  const aim = computeStats(bot, () => mk).mind.aim;
   return {
     id: rival ? `rival-${rival.id}` : `ai-${Math.floor(rng() * 1e9).toString(36)}`,
     team: rival ? rival.team : teamName(rng),
     bot,
-    skill,
+    mk,
     country: rival ? rival.country : country(rng),
     rival: rival?.id,
     arch,
-    rating: quality * 10 + skill.aim * 5 + (rival ? 4 : 0) + rng(),
+    rating: quality * 10 + aim * 5 + (rival ? 4 : 0) + rng(),
     wear: freshWear(),
   };
 }
@@ -142,7 +140,7 @@ export function createTournament(c: Career, eventId: string, botId: string, leve
       id: PLAYER,
       team: c.team,
       bot: player,
-      skill: skillFor(ev.tier),
+      mk: 1,
       country: c.country,
       arch: 'player',
       rating: 5,
@@ -268,12 +266,15 @@ export function standings(t: Tournament, g: Group) {
   return rows.sort((a, b) => b.pts - a.pts || b.dmg - a.dmg);
 }
 
+/** A computer team's part levels. */
+export const entrantLevels = (e: Entrant): Levels => () => e.mk ?? 1;
+
 /** Simulate a fight between two computer teams, headless. */
 export function simulate(a: Entrant, b: Entrant, arenaId: string, seed: number): FightResult {
-  const w = new World(computeStats(a.bot), computeStats(b.bot), arenaOf(arenaId), { seed, wear: [a.wear, b.wear] });
+  const w = new World(computeStats(a.bot, entrantLevels(a)), computeStats(b.bot, entrantLevels(b)), arenaOf(arenaId), { seed, wear: [a.wear, b.wear] });
   w.quiet = true;
-  const da = new Driver(w, 0, a.skill, seed);
-  const db = new Driver(w, 1, b.skill, seed + 3);
+  const da = new Driver(w, 0, seed);
+  const db = new Driver(w, 1, seed + 3);
   let n = 0;
   while (!w.over && n < 14000) {
     da.update(DT);

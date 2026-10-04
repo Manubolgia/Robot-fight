@@ -25,9 +25,6 @@ export interface Settings {
   sound: boolean;
   haptics: boolean;
   quality: 'high' | 'low';
-  autoFire: boolean;
-  assist: boolean;
-  lefty: boolean;
   numbers: boolean;
 }
 
@@ -40,7 +37,7 @@ export interface Toast {
 const SETTINGS_KEY = 'kilowatt.settings.v1';
 
 function loadSettings(): Settings {
-  const d: Settings = { sound: true, haptics: true, quality: 'high', autoFire: true, assist: true, lefty: false, numbers: true };
+  const d: Settings = { sound: true, haptics: true, quality: 'high', numbers: true };
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') };
   } catch {

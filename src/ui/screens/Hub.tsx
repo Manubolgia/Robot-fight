@@ -43,7 +43,7 @@ export function Hub() {
       </div>
       <div class="scroll">
         <Tip id="welcome">
-          Your robot weighs in at up to 100 kg and runs off one power core. Every part costs weight, and every powered part draws on the core: build, then fight your way up the circuit to the World Cup.
+          Your robot weighs in at up to 100 kg and runs off one power core. Every part costs weight, and every powered part draws on the core, its brain included. You build it and give it a battle plan; it does the fighting, all the way up the circuit to the World Cup.
         </Tip>
         <div class="kpis">
           <div class="kpi">
@@ -123,6 +123,9 @@ export function Hub() {
                 <span class={`badge ${r.weight > 100 ? 'bad' : 'gold'}`}>{r.weight.toFixed(1)} kg</span>
                 <span class={`badge ${r.draw > r.output + 1e-6 ? 'bad' : 'cyan'}`}>
                   {r.draw.toFixed(1)}/{r.output.toFixed(1)} kW
+                </span>
+                <span class="badge">
+                  <Icon name="brain" size={11} /> {r.brain}
                 </span>
                 {dmg > 0.01 && <span class="badge bad">{Math.round(dmg * 100)}% damaged</span>}
               </div>

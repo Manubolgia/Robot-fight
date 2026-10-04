@@ -4,7 +4,7 @@
 // Balance notes live with the numbers: each weapon family has a job and a
 // counter, see docs in README ("Strategies").
 
-import type { ArmorDef, ChassisDef, CoreDef, DriveDef, ModuleDef, PartDef, WeaponDef } from './types.ts';
+import type { ArmorDef, BrainDef, ChassisDef, CoreDef, DriveDef, ModuleDef, PartDef, WeaponDef } from './types.ts';
 
 // ---- frames ----------------------------------------------------------------
 
@@ -231,6 +231,12 @@ export const WEAPONS: WeaponDef[] = [
     lip: 0.45, energy: 8, bite: 0.66, gyro: 0.15, recoil: 0.25, launch: 0.42,
   },
   {
+    id: 'wp_twindrum', kind: 'weapon', name: 'Twin-Tooth Drum', tier: 2, price: 2400, weight: 15,
+    desc: 'A wider drum with two rows of teeth: more energy, more bite.',
+    type: 'drum', mount: 'front', power: 3.4, dmgType: 'kinetic', reach: 0.13, arc: 28, durability: 1.45,
+    lip: 0.48, energy: 14, bite: 0.68, gyro: 0.17, recoil: 0.24, launch: 0.45,
+  },
+  {
     id: 'wp_bar', kind: 'weapon', name: 'Bar Spinner', tier: 1, price: 750, weight: 15,
     desc: 'A horizontal steel bar. Wide arc, big energy, big recoil. Wedges deflect it.',
     type: 'hspin', mount: 'front', power: 2.6, dmgType: 'kinetic', reach: 0.35, arc: 70, durability: 1.0,
@@ -255,6 +261,12 @@ export const WEAPONS: WeaponDef[] = [
     energy: 24, bite: 0.6, gyro: 0.35, recoil: 0.3, launch: 0.55,
   },
   {
+    id: 'wp_tribar', kind: 'weapon', name: 'Tri-Blade Bar', tier: 3, price: 6200, weight: 16,
+    desc: 'Three blades on one hub: spins up faster than a bar and hits nearly as hard.',
+    type: 'hspin', mount: 'front', power: 4.0, dmgType: 'kinetic', reach: 0.36, arc: 70, durability: 1.05,
+    energy: 22, bite: 0.48, gyro: 0, recoil: 0.5, launch: 0.15,
+  },
+  {
     id: 'wp_undercutter', kind: 'weapon', name: 'Undercutter', tier: 4, price: 14500, weight: 17,
     desc: 'A low horizontal blade that rips wheels off. Hits the drive hard.',
     type: 'hspin', mount: 'front', power: 5.2, dmgType: 'kinetic', reach: 0.4, arc: 65, durability: 1.1,
@@ -271,6 +283,12 @@ export const WEAPONS: WeaponDef[] = [
     desc: 'The heaviest disc ever certified. One clean hit ends most fights.',
     type: 'vspin', mount: 'front', power: 6.5, dmgType: 'kinetic', reach: 0.32, arc: 22, durability: 1.1,
     energy: 46, bite: 0.56, gyro: 0.45, recoil: 0.35, launch: 0.6,
+  },
+  {
+    id: 'wp_halo', kind: 'weapon', name: 'Halo Shell', tier: 5, price: 33000, weight: 25,
+    desc: 'A full spinning shell: deadly from any side, with frightening energy. Very heavy.',
+    type: 'ring', mount: 'full', power: 6.0, dmgType: 'kinetic', reach: 0.1, arc: 180, durability: 1.45,
+    energy: 44, bite: 0.42, gyro: 0.32, recoil: 0.5, launch: 0.2,
   },
 
   // Flippers and lifters win by control: throw robots onto their backs,
@@ -304,6 +322,12 @@ export const WEAPONS: WeaponDef[] = [
     desc: 'Throws a heavyweight clean across the arena.',
     type: 'flipper', mount: 'front', power: 2.6, dmgType: 'kinetic', reach: 0.12, arc: 32, durability: 1.1,
     lip: 0.82, impulse: 950, reload: 2.8, damage: 14,
+  },
+  {
+    id: 'wp_hydrofork', kind: 'weapon', name: 'Hydraulic Forks', tier: 4, price: 14500, weight: 15,
+    desc: 'Low forks on a hydraulic arm: slide under, lift high, carry them anywhere.',
+    type: 'lifter', mount: 'front', power: 3.0, dmgType: 'kinetic', reach: 0.16, arc: 32, durability: 1.35,
+    lip: 0.88, impulse: 1250, reload: 2.0, hold: 3.4, grab: true, damage: 8,
   },
   {
     id: 'wp_launcher', kind: 'weapon', name: 'Launch Pad', tier: 5, price: 32000, weight: 13,
@@ -371,6 +395,12 @@ export const WEAPONS: WeaponDef[] = [
     type: 'saw', mount: 'front', power: 2.8, dmgType: 'cut', reach: 0.25, arc: 30, durability: 1.1,
     dps: 24, lip: 0.3,
   },
+  {
+    id: 'wp_armsaw', kind: 'weapon', name: 'Circular Saw Arm', tier: 4, price: 13000, weight: 11,
+    desc: 'A big circular saw on a reaching arm: cuts the top panels from further away.',
+    type: 'saw', mount: 'top', power: 2.6, dmgType: 'cut', reach: 0.6, arc: 26, durability: 1.15,
+    dps: 26,
+  },
 
   // Passive weapons need no power: it all goes to the wheels.
   {
@@ -392,10 +422,22 @@ export const WEAPONS: WeaponDef[] = [
     lip: 0.95, wedge: 0.95, ram: 0.25,
   },
   {
+    id: 'wp_plough', kind: 'weapon', name: 'Titan Plough', tier: 4, price: 11000, weight: 10,
+    desc: 'A full-width titanium plough: gets under everything and takes any hit.',
+    type: 'wedge', mount: 'front', power: 0, dmgType: 'kinetic', reach: 0.25, arc: 45, durability: 2.4,
+    lip: 0.95, wedge: 1.0, ram: 0.7,
+  },
+  {
     id: 'wp_lance', kind: 'weapon', name: 'Titanium Lance', tier: 3, price: 4400, weight: 9,
     desc: 'A long piercing ram. Fast robots turn it into a missile.',
     type: 'ram', mount: 'front', power: 0, dmgType: 'pierce', reach: 0.35, arc: 30, durability: 1.5,
     ram: 1.6,
+  },
+  {
+    id: 'wp_ramhead', kind: 'weapon', name: 'Steel Ram Head', tier: 4, price: 12500, weight: 10,
+    desc: 'A heavy sprung ram head: hits like a lance and shrugs off the hit it gives.',
+    type: 'ram', mount: 'front', power: 0, dmgType: 'pierce', reach: 0.3, arc: 35, durability: 1.8,
+    ram: 1.8,
   },
   {
     id: 'wp_battering', kind: 'weapon', name: 'Battering Ram', tier: 5, price: 28000, weight: 12,
@@ -491,7 +533,60 @@ export const MODULES: ModuleDef[] = [
 
 // ---- lookup ----------------------------------------------------------------
 
-export const ALL_PARTS: PartDef[] = [...CHASSIS, ...DRIVES, ...CORES, ...WEAPONS, ...ARMORS, ...MODULES];
+// ---- brains ----------------------------------------------------------------
+// The control board fights the robot. A sharper brain reacts sooner, aims
+// and times its weapon better and reads the hazards, but it draws power the
+// weapons and wheels could have had, and it needs a minimum to stay awake.
+
+export const BRAINS: BrainDef[] = [
+  {
+    id: 'br_relay', kind: 'brain', name: 'Relay Logic', tier: 1, price: 0, weight: 0.5,
+    desc: 'A box of relays and a prayer. Slow to react, wobbly aim, blind to the hazards. Sips power.',
+    power: 0.1, minPower: 0.3, reaction: 0.42, aim: 0.45, awareness: 0.2, durability: 1.0,
+  },
+  {
+    id: 'br_hobby', kind: 'brain', name: 'Hobby Board', tier: 1, price: 450, weight: 1,
+    desc: 'A hobbyist microcontroller: quicker and steadier than relays, still easy to fool.',
+    power: 0.35, minPower: 0.4, reaction: 0.33, aim: 0.56, awareness: 0.4, durability: 1.0,
+  },
+  {
+    id: 'br_berserker', kind: 'brain', name: 'Berserker Chip', tier: 2, price: 1500, weight: 1,
+    desc: 'Fast, cheap and furious. Never backs off, never looks where it is going.',
+    power: 0.5, minPower: 0.45, reaction: 0.22, aim: 0.6, awareness: 0.15, trait: 'reckless', durability: 1.1,
+  },
+  {
+    id: 'br_tactical', kind: 'brain', name: 'Tactical CPU', tier: 2, price: 2100, weight: 2,
+    desc: 'A proper combat controller: reads the arena and picks its moments.',
+    power: 0.9, minPower: 0.5, reaction: 0.27, aim: 0.66, awareness: 0.6, durability: 1.0,
+  },
+  {
+    id: 'br_sentinel', kind: 'brain', name: 'Sentinel Core', tier: 3, price: 5200, weight: 3,
+    desc: 'Defensive firmware: keeps its weapon between it and trouble, never wanders into a hazard.',
+    power: 1.1, minPower: 0.5, reaction: 0.22, aim: 0.72, awareness: 0.9, trait: 'cautious', durability: 1.2,
+  },
+  {
+    id: 'br_combat', kind: 'brain', name: 'Combat Computer', tier: 3, price: 6000, weight: 2.5,
+    desc: 'Military surplus. Sharp, fast and power hungry.',
+    power: 1.4, minPower: 0.55, reaction: 0.19, aim: 0.78, awareness: 0.72, durability: 1.0,
+  },
+  {
+    id: 'br_predator', kind: 'brain', name: 'Predator AI', tier: 4, price: 13500, weight: 2,
+    desc: 'Built to stalk: circles to the sides and rear and strikes there. Careless about the arena.',
+    power: 1.9, minPower: 0.6, reaction: 0.13, aim: 0.93, awareness: 0.55, trait: 'hunter', durability: 1.0,
+  },
+  {
+    id: 'br_neural', kind: 'brain', name: 'Neural Net', tier: 4, price: 15000, weight: 3.5,
+    desc: 'Learns the other robot as it fights: waits for it to commit, then punishes.',
+    power: 2.3, minPower: 0.6, reaction: 0.14, aim: 0.87, awareness: 0.84, trait: 'adaptive', durability: 1.0,
+  },
+  {
+    id: 'br_overmind', kind: 'brain', name: 'Overmind', tier: 5, price: 33000, weight: 4.5,
+    desc: 'The sharpest mind on the circuit, and the hungriest: it needs a big core to feed it.',
+    power: 3.4, minPower: 0.65, reaction: 0.09, aim: 0.96, awareness: 0.94, trait: 'adaptive', durability: 1.1,
+  },
+];
+
+export const ALL_PARTS: PartDef[] = [...CHASSIS, ...DRIVES, ...CORES, ...WEAPONS, ...ARMORS, ...MODULES, ...BRAINS];
 const BY_ID = new Map<string, PartDef>(ALL_PARTS.map((p) => [p.id, p]));
 
 export function part<T extends PartDef = PartDef>(id: string): T {
@@ -510,6 +605,30 @@ export const coreOf = (id: string) => part<CoreDef>(id);
 export const weaponOf = (id: string) => part<WeaponDef>(id);
 export const armorOf = (id: string) => part<ArmorDef>(id);
 export const moduleOf = (id: string) => part<ModuleDef>(id);
+export const brainOf = (id: string) => part<BrainDef>(id);
+
+const SPIN_TYPES = ['vspin', 'drum', 'hspin', 'ring'];
+
+/**
+ * The least share of its rated draw a powered part works on. Below it a
+ * weapon will not run, a drive stalls and a brain browns out. Bigger, later
+ * parts need more: they cannot be fitted and then starved.
+ */
+export function minPowerOf(p: PartDef): number {
+  switch (p.kind) {
+    case 'brain':
+      return p.minPower;
+    case 'drive':
+      return Math.round((0.3 + 0.04 * (p.tier - 1)) * 100) / 100;
+    case 'weapon':
+      if (p.power <= 0) return 0;
+      return Math.round(((SPIN_TYPES.includes(p.type) ? 0.35 : 0.25) + (SPIN_TYPES.includes(p.type) ? 0.05 : 0.04) * (p.tier - 1)) * 100) / 100;
+    case 'module':
+      return p.power ? 0.5 : 0;
+    default:
+      return 0;
+  }
+}
 
 /** Upgrade levels run 1..5; each adds 7% to the part's main numbers. */
 export const MAX_LEVEL = 5;

@@ -9,17 +9,22 @@ import { archetypesFor, makeBuild } from '../src/career/builds.ts';
 import { arenaOf } from '../src/data/arenas.ts';
 import { weaponOf } from '../src/data/parts.ts';
 import type { WeaponType } from '../src/data/types.ts';
-import { Driver, skillFor } from '../src/sim/ai.ts';
+import { Driver } from '../src/sim/ai.ts';
 import { mulberry32 } from '../src/sim/rng.ts';
 import { TUNE, computeStats } from '../src/sim/stats.ts';
 import { World, DT } from '../src/sim/world.ts';
 
 const ARENAS = ['garage', 'steelpit', 'crucible', 'worldarena', 'scrapyard', 'thunderdome'];
-/** the weapons that make each strategy what it is: their trims answer for its record */
+/**
+ * The weapons that make each strategy what it is: their trims answer for its
+ * record (a wedge's trim sets how hard it crushes what it pins).
+ */
 const KEY: Record<string, WeaponType[]> = {
   disc: ['vspin'], drum: ['drum'], bar: ['hspin'], ring: ['ring'], flipper: ['flipper'], lifter: ['lifter'],
-  hammer: ['hammer', 'axe'], crusher: ['crusher'], rammer: ['ram'], wedge: ['wedge'], saw: ['saw'], firestarter: ['flame'],
+  hammer: ['hammer', 'axe'], crusher: ['crusher'], rammer: ['ram'], wedge: ['wedge'], saw: ['saw'], firestarter: ['flipper', 'flame'],
 };
+/** trims outside these bounds mean the part's numbers need a look, not a bigger trim */
+const LIMITS = [0.25, 5];
 
 export interface TierResult {
   tier: number;
@@ -58,9 +63,8 @@ export function playTier(tier: number, n: number, seedBase: number): TierResult 
         const swap = k % 2 === 1;
         const w = new World(computeStats(swap ? db : da), computeStats(swap ? da : db), arenaOf(ARENAS[(k + i + j) % ARENAS.length]), { seed });
         w.quiet = true;
-        const sk = skillFor(tier);
-        const d0 = new Driver(w, 0, sk, seed);
-        const d1 = new Driver(w, 1, sk, seed + 5);
+        const d0 = new Driver(w, 0, seed);
+        const d1 = new Driver(w, 1, seed + 5);
         let steps = 0;
         while (!w.over && steps < 12000) {
           d0.update(DT);
@@ -143,7 +147,7 @@ if (!isMainThread) {
       }
     }
     for (const id of Object.keys(logSum)) {
-      TUNE[id] = Math.round(Math.max(0.15, Math.min(8, (TUNE[id] ?? 1) * Math.exp(logSum[id] / wSum[id]))) * 100) / 100;
+      TUNE[id] = Math.round(Math.max(LIMITS[0], Math.min(LIMITS[1], (TUNE[id] ?? 1) * Math.exp(logSum[id] / wSum[id]))) * 100) / 100;
     }
     console.log(formatTune());
   }
