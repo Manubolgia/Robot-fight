@@ -195,26 +195,30 @@ describe('brains and power', () => {
 
   it('a sharper brain wins more often in a mirror match', () => {
     let sharp = 0;
-    const N = 16;
-    for (let k = 0; k < N; k++) {
-      const d = makeBuild(arch(k % 2 ? 'drum' : 'hammer'), 5, mulberry32(100 + k));
-      d.brain = 'br_overmind';
-      d.power = autoPower(d);
-      const dull = structuredClone(d);
-      dull.brain = 'br_relay';
-      const swap = k % 4 >= 2;
-      const w = new World(computeStats(swap ? dull : d), computeStats(swap ? d : dull), arenaOf('steelpit'), { seed: k + 1 });
-      w.quiet = true;
-      const drivers = [new Driver(w, 0, k), new Driver(w, 1, k + 7)];
-      let n = 0;
-      while (!w.over && n < 14000) {
-        drivers[0].update(DT);
-        drivers[1].update(DT);
-        w.step();
+    let n = 0;
+    for (const id of ['disc', 'hammer', 'flipper', 'crusher', 'rammer', 'saw']) {
+      for (let k = 0; k < 6; k++) {
+        const d = makeBuild(arch(id), 5, mulberry32(500 + k * 17));
+        d.brain = 'br_overmind';
+        d.power = autoPower(d);
+        const dull = structuredClone(d);
+        dull.brain = 'br_relay';
+        const swap = k % 2 === 1;
+        const w = new World(computeStats(swap ? dull : d), computeStats(swap ? d : dull), arenaOf(ARENAS[k % 4].id), { seed: k + 1 });
+        w.quiet = true;
+        const drivers = [new Driver(w, 0, k), new Driver(w, 1, k + 7)];
+        let steps = 0;
+        while (!w.over && steps < 14000) {
+          drivers[0].update(DT);
+          drivers[1].update(DT);
+          w.step();
+          steps++;
+        }
+        const r = w.result!;
+        sharp += r.winner === null ? 0.5 : r.winner === (swap ? 1 : 0) ? 1 : 0;
         n++;
       }
-      if (w.result!.winner === (swap ? 1 : 0)) sharp++;
     }
-    expect(sharp / N).toBeGreaterThan(0.6);
+    expect(sharp / n).toBeGreaterThan(0.6);
   });
 });

@@ -21,11 +21,12 @@ await page.getByText(arena, { exact: true }).click();
 await page.screenshot({ path: 'shots/q-01-setup.png' });
 await page.getByRole('button', { name: /Fight!/ }).click();
 await page.waitForTimeout(1500);
-await page.getByRole('button', { name: 'Autopilot' }).click();
 for (let i = 2; i <= 7; i++) {
   await page.waitForTimeout(2600);
   await page.screenshot({ path: `shots/q-0${i}-fight.png` });
 }
+// enough watching: straight to the result
+await page.locator('.spectate .skip').click();
 await page.getByText(/VICTORY|DEFEAT/).first().waitFor({ timeout: 240000 });
 await page.waitForTimeout(800);
 await page.screenshot({ path: 'shots/q-08-results.png' });

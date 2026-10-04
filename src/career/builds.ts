@@ -64,10 +64,10 @@ export const ARCHETYPES: Archetype[] = [
   },
   {
     id: 'flipper', from: 1, name: 'Flipper', blurb: 'Gets under, throws them over, counts them out.',
-    front: ['flipper'], top: ['flame'], shapes: ['wedge', 'box'], drive: 'push', styles: ['treads', 'wheels4', 'wheels6'],
+    front: ['flipper'], top: [], shapes: ['wedge', 'box'], drive: 'push', styles: ['treads', 'wheels4', 'wheels6'],
     materials: ['ar_nano', 'ar_composite', 'ar_uhmw', 'ar_titanium', 'ar_alu'], zones: { front: 2, sides: 2, rear: 1, top: 1 },
     modules: ['skirts', 'magnets', 'shock', 'heatsink'], weaponBias: 0.5,
-    plan: { stance: 'aggressive', approach: 'flank', hazards: true }, traits: ['hunter', 'adaptive'],
+    plan: { stance: 'balanced', approach: 'flank', hazards: true }, traits: ['hunter', 'adaptive'],
   },
   {
     id: 'lifter', from: 2, name: 'Lifter', blurb: 'Scoop, carry, dump them in the hazards.',

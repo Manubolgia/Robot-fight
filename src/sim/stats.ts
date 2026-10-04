@@ -26,18 +26,18 @@ export const OVERVOLT_HEAT = 5;
  * flippers and lifters the trim also scales the throw (by its square root).
  */
 export const TUNE: Record<string, number> = {
-  wp_drum: 0.88, wp_twindrum: 0.76, wp_megadrum: 0.82,
-  wp_bar: 0.84, wp_tribar: 1.1, wp_undercutter: 1.36,
-  wp_disc: 0.69, wp_egg: 1.14, wp_megadisc: 0.58,
-  wp_ring: 2.09, wp_halo: 2.11,
-  wp_springflip: 2.68, wp_pneuflip: 1.52, wp_megaflip: 0.68, wp_launcher: 0.62,
-  wp_lifter: 3, wp_clamp: 0.78, wp_hydrofork: 0.65,
-  wp_sledge: 0.66, wp_pickaxe: 0.45, wp_thwack: 0.45, wp_pulverizer: 0.45, wp_titanhammer: 0.4,
-  wp_jaw: 0.81, wp_megajaw: 1.27,
-  wp_buzzsaw: 0.81, wp_twinsaw: 2.64, wp_armsaw: 0.38,
-  wp_plow: 1.3, wp_forks: 1.6, wp_plough: 1.6,
-  wp_spikes: 3.04, wp_lance: 3.52, wp_ramhead: 5, wp_battering: 2.91,
-  wp_flame: 0.29, wp_inferno: 0.25,
+  wp_drum: 1.07, wp_twindrum: 0.84, wp_megadrum: 0.71,
+  wp_bar: 0.91, wp_tribar: 1.13, wp_undercutter: 1.23,
+  wp_disc: 0.74, wp_egg: 1.09, wp_megadisc: 0.52,
+  wp_ring: 1.94, wp_halo: 1.89,
+  wp_springflip: 2.97, wp_pneuflip: 1.43, wp_megaflip: 0.74, wp_launcher: 0.64,
+  wp_lifter: 5, wp_clamp: 0.55, wp_hydrofork: 0.32,
+  wp_sledge: 0.89, wp_pickaxe: 0.66, wp_thwack: 0.68, wp_pulverizer: 0.51, wp_titanhammer: 0.68,
+  wp_jaw: 0.78, wp_megajaw: 1.15,
+  wp_buzzsaw: 1.21, wp_twinsaw: 2.74, wp_armsaw: 0.68,
+  wp_plow: 1.3, wp_forks: 4.31, wp_plough: 2.65,
+  wp_spikes: 3.81, wp_lance: 3.49, wp_ramhead: 5, wp_battering: 2.42,
+  wp_flame: 0.28, wp_inferno: 0.25,
 };
 export const trimOf = (w: WeaponDef) => TUNE[w.id] ?? 1;
 export const MAX_POWER = 1.3;

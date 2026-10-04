@@ -92,7 +92,7 @@ export class Driver {
     if (this.rebootT > 0) return 'Rebooting';
     switch (this.mode) {
       case 'attack':
-        return this.boost ? 'Charging' : 'Attacking';
+        return this.boost ? 'Charging' : 'Going in';
       case 'retreat': {
         const m = this.mainWeapon();
         return m && SPINNERS.has(m.w.def.type) && m.energy < m.w.energyMax * 0.9 ? 'Spinning up' : 'Backing off';
@@ -648,7 +648,9 @@ export class Driver {
       heading = this.reverse ? wrap(move + Math.PI) : move;
     }
     const err = wrap(heading - me.th);
-    c.turn = turnToward(err, me.s.turnRate, me.s.turnAccel);
+    // a dull brain lets small errors ride and overcorrects the big ones
+    const sloppy = 1 - this.skill.aim;
+    c.turn = clamp(turnToward(Math.abs(err) < sloppy * 0.35 ? 0 : err, me.s.turnRate, me.s.turnAccel) * (1 + sloppy * 0.4), -1, 1);
     const align = Math.cos(err);
     let thr = align > 0.2 ? base * Math.pow(align, 1.4) : base > 0 ? 0.1 : 0;
     if (dist < 0.3 && this.mode !== 'attack' && this.mode !== 'push') thr *= dist / 0.3;

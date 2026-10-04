@@ -20,8 +20,8 @@ Live: `https://manubolgia.github.io/Robot-fight/` (also in the
 **You build, the robot fights.** Nobody drives in the arena: you design the
 robot, split its power and give it a battle plan, and its brain does the rest.
 Watch at 1×, 2× or 4×, or skip straight to the result. Each robot's current
-intent shows under its health bar (spinning up, flanking, biding time,
-carrying, rebooting...).
+intent shows under its health bar (going in, spinning up, flanking, biding
+time, carrying, rebooting...).
 
 **Winning.** Destroy the other robot, drop it in the pit, or leave it unable to
 move for ten seconds (on its back with no way to self-right, or with its drive
