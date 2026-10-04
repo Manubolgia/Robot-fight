@@ -1,0 +1,507 @@
+// Robot drivers. Each one reads the fight and works the same controls a
+// player does. Tactics follow the robot's main weapon; skill sets how fast
+// they react, how well they aim and how much they respect the hazards.
+
+import { mulberry32, type Rng } from './rng.ts';
+import type { Bot, WeaponState, World } from './world.ts';
+
+export interface Skill {
+  /** seconds between decisions */
+  reaction: number;
+  /** 0..1 aim precision and lead */
+  aim: number;
+  /** 0..1 how readily it attacks with a half-ready weapon */
+  aggression: number;
+  /** 0..1 how well it avoids hazards and uses them */
+  hazardIQ: number;
+}
+
+export const SKILL_BY_TIER: Record<number, Skill> = {
+  1: { reaction: 0.36, aim: 0.5, aggression: 0.45, hazardIQ: 0.3 },
+  2: { reaction: 0.28, aim: 0.62, aggression: 0.55, hazardIQ: 0.5 },
+  3: { reaction: 0.22, aim: 0.74, aggression: 0.62, hazardIQ: 0.66 },
+  4: { reaction: 0.16, aim: 0.84, aggression: 0.68, hazardIQ: 0.8 },
+  5: { reaction: 0.12, aim: 0.92, aggression: 0.72, hazardIQ: 0.9 },
+};
+
+export const PILOT_SKILL: Skill = { reaction: 0.12, aim: 0.9, aggression: 0.65, hazardIQ: 0.9 };
+
+export function skillFor(tier: number, season = 1, rival = false): Skill {
+  const base = SKILL_BY_TIER[Math.max(1, Math.min(5, tier))];
+  const k = Math.min(0.15, (season - 1) * 0.04) + (rival ? 0.05 : 0);
+  return {
+    reaction: Math.max(0.08, base.reaction * (1 - k)),
+    aim: Math.min(0.98, base.aim + k),
+    aggression: Math.min(0.9, base.aggression + k * 0.5),
+    hazardIQ: Math.min(0.98, base.hazardIQ + k),
+  };
+}
+
+type Mode = 'attack' | 'retreat' | 'flank' | 'push' | 'hold' | 'wait' | 'backoff' | 'carry' | 'unstick' | 'escape';
+
+const TAU = Math.PI * 2;
+const wrap = (a: number) => {
+  a = (a + Math.PI) % TAU;
+  if (a < 0) a += TAU;
+  return a - Math.PI;
+};
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+
+const SPINNERS = new Set(['vspin', 'drum', 'hspin', 'ring']);
+
+/**
+ * Turn input that brings the heading error to zero as fast as the robot can
+ * without overshooting: the fastest spin from which it can still brake in time.
+ */
+export function turnToward(err: number, turnRate: number, turnAccel: number): number {
+  const w = Math.sqrt(2 * turnAccel * 0.7 * Math.abs(err));
+  return clamp((Math.sign(err) * Math.min(turnRate, w)) / Math.max(0.1, turnRate), -1, 1);
+}
+
+export class Driver {
+  private rng: Rng;
+  private next = 0;
+  private mode: Mode = 'attack';
+  private tx = 0;
+  private ty = 0;
+  /** face this point instead of driving at it (reverse away from it) */
+  private faceX = 0;
+  private faceY = 0;
+  private reverse = false;
+  private throttle = 1;
+  private boost = false;
+  private stuckT = 0;
+  private unstickT = 0;
+  private backoffT = 0;
+  /** how long we have been wedged, lifted or held */
+  private pinnedT = 0;
+  private escapeT = 0;
+  private noise = 0;
+  private flankSide = 1;
+  /** whether this decision noticed the hazards ahead */
+  private notice = true;
+
+  private world: World;
+  readonly idx: number;
+  skill: Skill;
+
+  constructor(world: World, idx: number, skill: Skill, seed = 7) {
+    this.world = world;
+    this.idx = idx;
+    this.skill = skill;
+    this.rng = mulberry32(seed * 7919 + idx);
+    this.noise = this.rng() * 100;
+    this.flankSide = this.rng() < 0.5 ? 1 : -1;
+  }
+
+  get me(): Bot {
+    return this.world.bots[this.idx];
+  }
+
+  get op(): Bot {
+    return this.world.bots[1 - this.idx];
+  }
+
+  /** Call every simulation step. */
+  update(dt: number) {
+    const me = this.me;
+    me.auto = true;
+    if (this.world.over) {
+      me.ctl.throttle = 0;
+      me.ctl.turn = 0;
+      me.ctl.strafe = 0;
+      return;
+    }
+    this.watchStuck(dt);
+    this.next -= dt;
+    if (this.next <= 0) {
+      this.next = this.skill.reaction * (0.75 + this.rng() * 0.5);
+      this.think();
+    }
+    this.steer();
+  }
+
+  // ---- deciding --------------------------------------------------------------
+
+  private mainWeapon(): WeaponState | null {
+    const me = this.me;
+    if (me.front && me.front.w.def.type !== 'wedge' && me.comp.front > 0) return me.front;
+    if (me.top && me.comp.top > 0) return me.top;
+    return me.front && me.comp.front > 0 ? me.front : null;
+  }
+
+  private think() {
+    const w = this.world;
+    const me = this.me;
+    const op = this.op;
+    if (!w.mobile(me)) return;
+    this.notice = this.rng() < 0.25 + this.skill.hazardIQ * 0.75;
+    if (this.unstickT > 0) {
+      this.mode = 'unstick';
+      return;
+    }
+    if (this.escapeT > 0) {
+      this.mode = 'escape';
+      return;
+    }
+    const dx = op.x - me.x;
+    const dy = op.y - me.y;
+    const dist = Math.hypot(dx, dy);
+    const lead = clamp(dist / 4, 0, 0.6) * this.skill.aim;
+    const px = op.x + op.vx * lead;
+    const py = op.y + op.vy * lead;
+    const opDown = op.ko || op.inPit || (op.inverted && !op.s.invertible && op.s.selfRight <= 0);
+    this.boost = false;
+    this.reverse = false;
+    this.throttle = 1;
+
+    if (opDown) {
+      // they are being counted out: stay clear
+      this.mode = 'wait';
+      this.setRetreat(2.5);
+      return;
+    }
+
+    const main = this.mainWeapon();
+    const type = main?.w.def.type ?? 'wedge';
+    const danger = this.opDanger();
+
+    if (main && SPINNERS.has(type)) {
+      const ef = main.energy / Math.max(1, main.w.energyMax);
+      const need = (type === 'ring' ? 0.7 : 0.62) - 0.25 * this.skill.aggression;
+      if (ef >= need || (dist < 1.1 && ef > 0.22)) {
+        this.mode = 'attack';
+        this.target(px, py);
+        this.boost = dist > 1.4 && dist < 4 && ef > 0.8;
+      } else {
+        this.mode = 'retreat';
+        this.setRetreat(dist < 3 ? 2 : 0);
+      }
+      return;
+    }
+
+    if (type === 'flipper' || type === 'lifter') {
+      if (main?.holding) {
+        this.mode = 'carry';
+        const [hx, hy] = this.hazardGoal(op);
+        this.target(hx, hy);
+        return;
+      }
+      if (danger && dist < 3.2 && this.skill.hazardIQ > 0.25) {
+        this.mode = 'flank';
+        this.flank(op, 1.25);
+        if (Math.abs(this.opFacing()) > 1.3) this.target(px, py);
+        return;
+      }
+      this.mode = 'attack';
+      this.target(px, py);
+      this.boost = dist > 1.5 && dist < 3.5 && main != null && main.reload <= 0;
+      return;
+    }
+
+    if (type === 'crusher') {
+      if (main?.holding) {
+        this.mode = 'carry';
+        const [hx, hy] = this.hazardGoal(op);
+        this.target(hx, hy);
+        return;
+      }
+      if (danger && dist < 3 && main && main.reload > 0.4) {
+        this.mode = 'retreat';
+        this.setRetreat(1.8);
+        return;
+      }
+      this.mode = 'attack';
+      this.target(px, py);
+      return;
+    }
+
+    if (type === 'hammer' || type === 'axe') {
+      const reach = me.s.length / 2 + main!.w.reach * 0.7 + op.s.radius;
+      const pushy = me.s.frontWedge > 0.35;
+      if (pushy && main!.reload > 0.4) {
+        this.pushPlan(op);
+        return;
+      }
+      if (danger && main!.reload > 0.5 && dist < 2.5) {
+        this.mode = 'retreat';
+        this.setRetreat(1.5);
+        return;
+      }
+      this.mode = dist < reach ? 'hold' : 'attack';
+      this.target(px, py);
+      if (this.mode === 'hold') this.throttle = 0.15;
+      return;
+    }
+
+    if (type === 'ram') {
+      // a ram needs a short run-up after each hit; pinned against a wall or a
+      // hazard, keep shoving instead
+      const pinned = w.hazardAt(op.x, op.y, 0.6) > 0 || Math.abs(op.x) > w.half - 1 || Math.abs(op.y) > w.half - 1;
+      if (this.backoffT > 0 || (!pinned && me.ramCd > 0.25 && dist < 1.4)) {
+        if (this.backoffT <= 0) this.backoffT = 0.45 + this.rng() * 0.3;
+        this.mode = 'backoff';
+        this.setRetreat(1.6);
+        return;
+      }
+      if (pinned && dist < 1.5) {
+        this.pushPlan(op);
+        return;
+      }
+      this.mode = 'attack';
+      this.target(px, py);
+      this.boost = dist > 1.3 && dist < 4.5;
+      return;
+    }
+
+    if (type === 'saw' || type === 'flame') {
+      if (me.s.frontWedge > 0.35 || type === 'flame') {
+        this.pushPlan(op);
+        return;
+      }
+      this.mode = 'attack';
+      this.target(px, py);
+      return;
+    }
+
+    // wedges, plows and anything else: push them into trouble
+    this.pushPlan(op);
+  }
+
+  private pushPlan(op: Bot) {
+    const me = this.me;
+    const [gx, gy] = this.hazardGoal(op);
+    let ux = gx - op.x;
+    let uy = gy - op.y;
+    const ul = Math.hypot(ux, uy) || 1;
+    ux /= ul;
+    uy /= ul;
+    const behindX = op.x - ux * (me.s.radius + op.s.radius + 0.5);
+    const behindY = op.y - uy * (me.s.radius + op.s.radius + 0.5);
+    const lined = Math.hypot(behindX - me.x, behindY - me.y) < 0.7 || this.touching();
+    if (lined || this.skill.hazardIQ < 0.4 || Math.hypot(op.x - me.x, op.y - me.y) < 1.2) {
+      this.mode = 'push';
+      this.target(op.x + ux * 0.6, op.y + uy * 0.6);
+      this.boost = this.touching() || Math.hypot(op.x - me.x, op.y - me.y) < 2.5;
+    } else {
+      this.mode = 'flank';
+      this.target(behindX, behindY);
+    }
+  }
+
+  private touching(): boolean {
+    const me = this.me;
+    const op = this.op;
+    return Math.hypot(op.x - me.x, op.y - me.y) < me.s.length / 2 + op.s.length / 2 + 0.15;
+  }
+
+  /** The best place to shove the opponent: open pit, hazards, spiked walls, else the nearest wall. */
+  private hazardGoal(op: Bot): [number, number] {
+    const w = this.world;
+    const ar = w.arena;
+    const h = w.half;
+    const opts: Array<[number, number, number]> = [];
+    if (ar.pit && (w.pitOpen || w.t + 4 > ar.pit.opensAt)) opts.push([ar.pit.x, ar.pit.y, 3]);
+    for (const s of ar.saws ?? []) opts.push([s.x, s.y, 1.2]);
+    if (ar.hammer) opts.push([ar.hammer.x, ar.hammer.y, 1.4]);
+    for (const f of ar.flames ?? []) opts.push([f.x, f.y, 0.8]);
+    for (const sp of ar.spikes ?? []) {
+      const mid = (sp.from + sp.to) / 2;
+      if (sp.side === 'n') opts.push([mid, h, 1.1]);
+      if (sp.side === 's') opts.push([mid, -h, 1.1]);
+      if (sp.side === 'e') opts.push([h, mid, 1.1]);
+      if (sp.side === 'w') opts.push([-h, mid, 1.1]);
+    }
+    // plain walls
+    const wx = op.x > 0 ? h : -h;
+    const wy = op.y > 0 ? h : -h;
+    opts.push(Math.abs(op.x) > Math.abs(op.y) ? [wx, op.y, 0.5] : [op.x, wy, 0.5]);
+    let best = opts[opts.length - 1];
+    let bestScore = -Infinity;
+    for (const o of opts) {
+      const d = Math.hypot(o[0] - op.x, o[1] - op.y);
+      const score = o[2] * this.skill.hazardIQ * 2 - d * 0.6;
+      if (score > bestScore) {
+        bestScore = score;
+        best = o;
+      }
+    }
+    return [best[0], best[1]];
+  }
+
+  /** How squarely the opponent faces us (0 = dead on). */
+  private opFacing(): number {
+    const me = this.me;
+    const op = this.op;
+    return wrap(Math.atan2(me.y - op.y, me.x - op.x) - op.th);
+  }
+
+  /** Is the opponent's weapon a threat from where we are? */
+  private opDanger(): boolean {
+    const op = this.op;
+    const f = Math.abs(this.opFacing());
+    const fw = op.front;
+    if (fw && op.comp.front > 0) {
+      const t = fw.w.def.type;
+      if (SPINNERS.has(t) && fw.energy > fw.w.energyMax * 0.4 && (t === 'ring' || f < fw.w.arc + 0.5)) return true;
+      if ((t === 'flipper' || t === 'lifter' || t === 'crusher') && fw.reload <= 0 && f < 0.8) return true;
+    }
+    const tw = op.top;
+    if (tw && op.comp.top > 0 && (tw.w.def.type === 'hammer' || tw.w.def.type === 'axe') && tw.reload <= 0 && f < 0.6) return true;
+    return false;
+  }
+
+  private flank(op: Bot, r: number) {
+    const me = this.me;
+    // pick the flank on our side of their heading
+    const side = wrap(Math.atan2(me.y - op.y, me.x - op.x) - op.th) > 0 ? 1 : -1;
+    this.flankSide = side;
+    const a = op.th + side * 1.75;
+    this.target(op.x + Math.cos(a) * r, op.y + Math.sin(a) * r);
+    this.boost = false;
+  }
+
+  /** Back away from the opponent while keeping the weapon pointed at them. */
+  private setRetreat(dist: number) {
+    const me = this.me;
+    const op = this.op;
+    const h = this.world.half - 1;
+    let ax = me.x - op.x;
+    let ay = me.y - op.y;
+    const l = Math.hypot(ax, ay) || 1;
+    ax /= l;
+    ay /= l;
+    let tx = me.x + ax * dist;
+    let ty = me.y + ay * dist;
+    // near a wall: slide along it instead
+    if (Math.abs(tx) > h || Math.abs(ty) > h) {
+      const sx = -ay * this.flankSide;
+      const sy = ax * this.flankSide;
+      tx = me.x + sx * dist;
+      ty = me.y + sy * dist;
+      if (Math.abs(tx) > h || Math.abs(ty) > h) this.flankSide *= -1;
+    }
+    this.tx = clamp(tx, -h, h);
+    this.ty = clamp(ty, -h, h);
+    this.faceX = op.x;
+    this.faceY = op.y;
+    this.reverse = dist > 0;
+    this.throttle = dist > 0 ? 0.85 : 0;
+  }
+
+  private target(x: number, y: number) {
+    const h = this.world.half - 0.45;
+    // aim wobble for less skilled drivers
+    const n = (1 - this.skill.aim) * 0.9;
+    const t = this.world.t;
+    this.tx = clamp(x + Math.sin(t * 0.9 + this.noise) * n, -h, h);
+    this.ty = clamp(y + Math.cos(t * 1.1 + this.noise) * n, -h, h);
+    this.faceX = this.tx;
+    this.faceY = this.ty;
+  }
+
+  // ---- steering --------------------------------------------------------------
+
+  private watchStuck(dt: number) {
+    const me = this.me;
+    this.backoffT = Math.max(0, this.backoffT - dt);
+    this.escapeT = Math.max(0, this.escapeT - dt);
+    const pinned = me.wedged > 0 && me.wedgeK > 0.3;
+    this.pinnedT = pinned ? this.pinnedT + dt : Math.max(0, this.pinnedT - dt * 2);
+    // a wedge has us: back off it, twisting, before we get shoved into something
+    if (this.pinnedT > 0.55 + (1 - this.skill.aim) * 0.6 && this.escapeT <= 0 && this.unstickT <= 0) {
+      this.escapeT = 0.7 + this.rng() * 0.4;
+      this.flankSide = this.rng() < 0.5 ? 1 : -1;
+      this.pinnedT = 0;
+      this.mode = 'escape';
+    }
+    if (this.unstickT > 0) {
+      this.unstickT -= dt;
+      return;
+    }
+    const pushing = Math.abs(me.ctl.throttle) > 0.5 && me.speed < 0.15 && this.world.mobile(me);
+    const contact = this.touching();
+    this.stuckT = pushing && !(contact && this.mode !== 'unstick' && this.mode !== 'retreat') ? this.stuckT + dt : 0;
+    if (contact && pushing) this.stuckT += dt * 0.25;
+    if (this.stuckT > 1.4) {
+      this.stuckT = 0;
+      this.unstickT = 0.7;
+      this.mode = 'unstick';
+    }
+  }
+
+  private steer() {
+    const w = this.world;
+    const me = this.me;
+    const c = me.ctl;
+    c.fire = false;
+    c.fireTop = false;
+    c.boost = false;
+    if (!w.mobile(me)) {
+      c.throttle = 0;
+      c.turn = 0;
+      c.strafe = 0;
+      return;
+    }
+    if (this.mode === 'unstick') {
+      c.throttle = -0.9;
+      c.turn = this.flankSide;
+      c.strafe = 0;
+      return;
+    }
+    if (this.mode === 'escape') {
+      c.throttle = -1;
+      c.turn = this.flankSide;
+      c.strafe = me.s.strafe ? this.flankSide : 0;
+      c.boost = true;
+      if (this.escapeT <= 0) this.mode = 'attack';
+      return;
+    }
+    // face the point, then drive at it (or away from it, in reverse)
+    const dist = Math.hypot(this.tx - me.x, this.ty - me.y);
+    let heading: number;
+    let base = this.throttle;
+    if (base <= 0.01 || dist < 0.05) {
+      heading = Math.atan2(this.faceY - me.y, this.faceX - me.x);
+      base = 0;
+    } else {
+      const move = this.avoid(Math.atan2(this.ty - me.y, this.tx - me.x));
+      heading = this.reverse ? wrap(move + Math.PI) : move;
+    }
+    const err = wrap(heading - me.th);
+    c.turn = turnToward(err, me.s.turnRate, me.s.turnAccel);
+    const align = Math.cos(err);
+    let thr = align > 0.2 ? base * Math.pow(align, 1.4) : base > 0 ? 0.1 : 0;
+    if (dist < 0.3 && this.mode !== 'attack' && this.mode !== 'push') thr *= dist / 0.3;
+    c.throttle = this.reverse ? -thr : thr;
+    c.strafe = 0;
+    if (me.s.strafe && this.mode === 'flank') {
+      // mecanum: slide toward the flank while turning
+      c.strafe = clamp(-Math.sin(err) * 1.2, -1, 1);
+    }
+    c.boost = this.boost && Math.abs(err) < 0.35;
+  }
+
+  /** Bend a heading around hazards ahead, as far as the driver notices them. */
+  private avoid(goal: number): number {
+    const w = this.world;
+    const me = this.me;
+    const iq = this.skill.hazardIQ;
+    if (iq < 0.05) return goal;
+    const look = 0.6 + me.speed * 0.35;
+    const probe = (a: number) => w.hazardAt(me.x + Math.cos(a) * look, me.y + Math.sin(a) * look, me.s.radius * 0.6);
+    // carrying or pushing an opponent into a hazard: keep going
+    if (this.mode === 'carry' || (this.mode === 'push' && this.touching())) {
+      const d = probe(goal);
+      if (d < 2.5 || this.mode === 'carry') return goal;
+    }
+    const ahead = probe(goal);
+    if (ahead === 0) return goal;
+    // the open pit is impossible to miss for anyone half decent
+    if (!this.notice && !(ahead >= 3 && iq > 0.3)) return goal;
+    for (const off of [0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.3, -2.3]) {
+      if (probe(goal + off) === 0) return goal + off;
+    }
+    return goal + Math.PI;
+  }
+}
