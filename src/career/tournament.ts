@@ -89,14 +89,26 @@ function pickArchetypes(rng: Rng, n: number, tier: number): string[] {
   return out.slice(0, n);
 }
 
-/** Opponents are built from the parts of the event's tier; scrappier early on. */
+/**
+ * What a team at each level of the circuit has spent on parts beyond the
+ * starter kit: about a kit and a couple of upgrades in the Garage League, the
+ * best of everything by the World Cup.
+ */
+const BUDGET = [0, 1700, 8000, 24000, 65000, 170000];
+
+export function teamBudget(tier: number, quality: number, season: number, rival = false): number {
+  return BUDGET[tier] * (0.55 + 0.5 * quality) * (1 + 0.35 * (Math.max(1, season) - 1)) * (rival ? 1.5 : 1);
+}
+
+/** Opponents are built from the parts of the event's tier, as far as their money goes; scrappier early on. */
 function makeEntrant(rng: Rng, ev: EventDef, season: number, arch: string, taken: Set<string>, rival?: (typeof RIVALS)[number]): Entrant {
   const tier = ev.tier;
   const lowQ = [0, 0.35, 0.6, 0.78, 0.9, 1][tier];
   const quality = rival ? 1 : Math.min(1, lowQ + rng() * 0.25 + (season - 1) * 0.08);
   const partsTier = Math.min(5, tier + (season > 2 && rng() < 0.3 ? 1 : 0));
   const name = rival ? rival.bot : botName(rng, taken);
-  const bot = makeBuild(archetypeOf(arch), partsTier, rng, { name, paint: rival ? rival.paint : randomPaint(rng), quality });
+  const budget = teamBudget(tier, quality, season, !!rival);
+  const bot = makeBuild(archetypeOf(arch), partsTier, rng, { name, paint: rival ? rival.paint : randomPaint(rng), quality, budget });
   // later seasons the teams have upgraded their parts; rivals are a mark ahead
   const mk = Math.min(5, 1 + Math.max(0, season - 1) + (rival ? 1 : 0));
   const aim = computeStats(bot, () => mk).mind.aim;

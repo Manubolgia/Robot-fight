@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ARCHETYPES, archetypesFor, makeBuild } from '../src/career/builds.ts';
 import { KITS, closeTournament, newCareer } from '../src/career/career.ts';
-import { PLAYER, createTournament, nextPlayerMatch, recordPlayerFight } from '../src/career/tournament.ts';
+import { PLAYER, createTournament, nextPlayerMatch, recordPlayerFight, teamBudget } from '../src/career/tournament.ts';
 import { ARENAS, arenaOf } from '../src/data/arenas.ts';
 import { EVENTS, FORMAT_FIGHTS } from '../src/data/events.ts';
 import { ALL_PARTS, part, weaponOf } from '../src/data/parts.ts';
@@ -60,6 +60,33 @@ describe('parts and designs', () => {
         expect(powerDraw(d)).toBeLessThanOrEqual(coreOutput(d) + 1e-9);
         for (const id of [d.chassis, d.drive, d.core, d.front, d.top, ...d.modules]) if (id) expect(part(id).tier).toBeLessThanOrEqual(tier);
       }
+    }
+  });
+
+  it('computer teams build within their budget, and field better robots up the circuit', () => {
+    const STARTER = new Set(KITS[0].parts.filter((id) => part(id).price === 0));
+    const spentOn = (d: ReturnType<typeof makeBuild>) =>
+      [d.chassis, d.drive, d.core, d.front, d.top, d.brain, d.armor.material, ...d.modules].reduce((s, id) => s + (id && !STARTER.has(id) ? part(id).price : 0), 0);
+    let last = 0;
+    for (let tier = 1; tier <= 5; tier++) {
+      let total = 0;
+      let n = 0;
+      for (const a of archetypesFor(tier)) {
+        for (const q of [0.35, 0.7, 1]) {
+          const budget = teamBudget(tier, q, 1);
+          const d = makeBuild(a, tier, mulberry32(tier * 7 + a.id.length), { quality: q, budget });
+          expect(spentOn(d), `${a.id} at tier ${tier}`).toBeLessThanOrEqual(budget);
+          expect(designWeight(d)).toBeLessThanOrEqual(WEIGHT_LIMIT + 1e-9);
+          expect(powerDraw(d)).toBeLessThanOrEqual(coreOutput(d) + 1e-9);
+          // never a weapon it cannot afford to run
+          if (d.front) expect(d.power.front, `${a.id} at tier ${tier}`).toBeGreaterThan(0);
+          if (d.top) expect(d.power.top, `${a.id} at tier ${tier}`).toBeGreaterThan(0);
+          total += spentOn(d);
+          n++;
+        }
+      }
+      expect(total / n).toBeGreaterThan(last * 2);
+      last = total / n;
     }
   });
 
@@ -196,9 +223,11 @@ describe('brains and power', () => {
   it('a sharper brain wins more often in a mirror match', () => {
     let sharp = 0;
     let n = 0;
-    for (const id of ['disc', 'hammer', 'flipper', 'crusher', 'rammer', 'saw']) {
-      for (let k = 0; k < 6; k++) {
-        const d = makeBuild(arch(id), 5, mulberry32(500 + k * 17));
+    // every strategy, each with its own plan: patient counter-punchers give up
+    // the first strike in a mirror, so the edge shows across the field
+    for (const a of ARCHETYPES) {
+      for (let k = 0; k < 5; k++) {
+        const d = makeBuild(a, 5, mulberry32(500 + k * 17));
         d.brain = 'br_overmind';
         d.power = autoPower(d);
         const dull = structuredClone(d);

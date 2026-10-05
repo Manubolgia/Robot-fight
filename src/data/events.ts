@@ -98,6 +98,8 @@ export const EVENTS: EventDef[] = [
 ];
 
 export const eventOf = (id: string) => EVENTS.find((e) => e.id === id);
+/** The arenas a tier's events are fought in. */
+export const arenasOfTier = (t: number) => [...new Set(EVENTS.filter((e) => e.tier === t).map((e) => e.arena))];
 export const tierOf = (t: number) => TIERS.find((x) => x.tier === t) ?? TIERS[0];
 
 export const FORMAT_LABEL: Record<Format, string> = {

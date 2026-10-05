@@ -13,7 +13,7 @@ export const DT = 1 / 120;
 export const FIGHT_TIME = 90;
 export const COUNT_OUT = 10;
 /** crushing damage per second per point of a wedge's ram value, pinned against a wall */
-const PIN_DPS = 60;
+const PIN_DPS = 180;
 const KNOCK = 0.6;
 /** a hit at least this big gets the sparks, the shake and the crowd */
 export const BIG_HIT = 60;
@@ -486,13 +486,17 @@ export class World {
     b.hazardCd -= dt;
     if (b.wedged <= 0) b.wedgeK = 0;
 
-    // heat: overvolted systems at work, cooling, flames
-    const working = Math.min(1, Math.abs(b.ctl.throttle) + Math.abs(b.ctl.turn) * 0.5);
-    let heat = b.s.driveHeat * working + b.s.brainHeat;
-    for (const ws of [b.front, b.top]) {
-      if (!ws) continue;
-      const busy = ws.w.def.energy ? ws.energy < ws.w.energyMax * 0.98 : ws.reload > 0 || ws.firing || ws.holding;
-      if (busy) heat += ws.w.overvoltHeat;
+    // heat: overvolted systems at work, cooling, flames. Overheated, the
+    // core throttles everything back (half power, no overvolt), so it cools
+    let heat = 0;
+    if (!b.overheated) {
+      const working = Math.min(1, Math.abs(b.ctl.throttle) + Math.abs(b.ctl.turn) * 0.5);
+      heat = b.s.driveHeat * working + b.s.brainHeat;
+      for (const ws of [b.front, b.top]) {
+        if (!ws) continue;
+        const busy = ws.w.def.energy ? ws.energy < ws.w.energyMax * 0.98 : ws.reload > 0 || ws.firing || ws.holding;
+        if (busy) heat += ws.w.overvoltHeat;
+      }
     }
     if (b.boostT > 0) heat += 9;
     b.heat += (heat - b.s.cooling) * dt;
@@ -831,8 +835,8 @@ export class World {
       this.damage(b, dmg, fw.w.def.dmgType, zone, a.idx, { kind: fw.w.def.type, x: px, y: py, pierce: fw.w.def.type === 'ram' ? 0.15 : 0, nx, ny });
       this.wearWeapon(a, fw, dmg * 0.06);
     }
-    if (b.s.thorns && closing > 1.0 && b.thornsCd <= 0) {
-      b.thornsCd = 0.6;
+    if (b.s.thorns && closing > 1.5 && b.thornsCd <= 0) {
+      b.thornsCd = 1;
       this.damage(a, b.s.thorns * Math.min(2, closing / 2), 'pierce', 'front', b.idx, { kind: 'thorns', x: px, y: py, nx: -nx, ny: -ny });
     }
   }
@@ -1362,8 +1366,9 @@ export class World {
     b.heat += w.heat * wf * dt;
     const zone = this.zoneFrom(b, a.x, a.y);
     this.damage(b, w.dps * wf * dt, 'thermal', zone, a.idx, { kind: 'flame', quiet: true });
-    a.aggression += dt * 0.5;
-    if (b.heat > 80) a.control += dt * 0.4;
+    // playing a flame over them is pressure, but not a fight's worth of it
+    a.aggression += dt * 0.2;
+    if (b.heat > 80) a.control += dt * 0.3;
   }
 
   private wearWeapon(a: Bot, ws: WeaponState, amount: number) {

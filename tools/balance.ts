@@ -1,8 +1,10 @@
 // Round-robin of every archetype against every other, AI driving both sides,
 // to check that no strategy dominates.
 //   node tools/balance.ts [tier] [fightsPerPair] [arenas,comma,separated]
+// (arenas default to those of the tier's events)
 import { archetypesFor, makeBuild } from '../src/career/builds.ts';
 import { arenaOf } from '../src/data/arenas.ts';
+import { arenasOfTier } from '../src/data/events.ts';
 import { Driver } from '../src/sim/ai.ts';
 import { mulberry32 } from '../src/sim/rng.ts';
 import { computeStats } from '../src/sim/stats.ts';
@@ -10,7 +12,7 @@ import { World, DT } from '../src/sim/world.ts';
 
 const tier = Number(process.argv[2] ?? 3);
 const N = Number(process.argv[3] ?? 8);
-const arenas = (process.argv[4] ?? 'garage,steelpit,crucible,worldarena').split(',');
+const arenas = process.argv[4] ? process.argv[4].split(',') : arenasOfTier(tier);
 const only = process.argv[5]?.split(',');
 const archs = archetypesFor(tier).filter((a) => !only || only.includes(a.id));
 

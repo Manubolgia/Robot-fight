@@ -81,19 +81,19 @@ const BASE = ['ch_scrapbox', 'dr_twin', 'co_lead', 'ar_alu', 'br_relay'];
 
 export const KITS: Kit[] = [
   {
-    id: 'spinner', name: 'Spinner', blurb: 'A toothed drum on a steel box. Hits hard and pops robots into the air.',
-    parts: [...BASE, 'wp_drum'],
-    design: { chassis: 'ch_scrapbox', drive: 'dr_twin', core: 'co_lead', front: 'wp_drum', top: null, armor: { material: 'ar_alu', front: 3, sides: 3, rear: 2, top: 1 }, modules: [], brain: 'br_relay', plan: { stance: 'aggressive', approach: 'direct', hazards: false } },
+    id: 'spinner', name: 'Spinner', blurb: 'A toothed drum on a flat frame that fights either way up. Hits hard and pops robots into the air.',
+    parts: [...BASE, 'ch_pancake', 'wp_drum'],
+    design: { chassis: 'ch_pancake', drive: 'dr_twin', core: 'co_lead', front: 'wp_drum', top: null, armor: { material: 'ar_alu', front: 5, sides: 5, rear: 5, top: 4 }, modules: [], brain: 'br_relay', plan: { stance: 'aggressive', approach: 'direct', hazards: false } },
   },
   {
     id: 'control', name: 'Control', blurb: 'A wedge frame with a spring flipper. Get under them and throw them over.',
     parts: [...BASE, 'ch_ramprat', 'wp_springflip'],
-    design: { chassis: 'ch_ramprat', drive: 'dr_twin', core: 'co_lead', front: 'wp_springflip', top: null, armor: { material: 'ar_alu', front: 4, sides: 3, rear: 2, top: 2 }, modules: [], brain: 'br_relay', plan: { stance: 'aggressive', approach: 'flank', hazards: true } },
+    design: { chassis: 'ch_ramprat', drive: 'dr_twin', core: 'co_lead', front: 'wp_springflip', top: null, armor: { material: 'ar_alu', front: 5, sides: 5, rear: 5, top: 5 }, modules: [], brain: 'br_relay', plan: { stance: 'aggressive', approach: 'flank', hazards: true } },
   },
   {
     id: 'brawler', name: 'Brawler', blurb: 'A plow to pin them and a sledgehammer to finish them off.',
     parts: [...BASE, 'wp_plow', 'wp_sledge'],
-    design: { chassis: 'ch_scrapbox', drive: 'dr_twin', core: 'co_lead', front: 'wp_plow', top: 'wp_sledge', armor: { material: 'ar_alu', front: 3, sides: 2, rear: 1, top: 1 }, modules: [], brain: 'br_relay', plan: { stance: 'balanced', approach: 'direct', hazards: true } },
+    design: { chassis: 'ch_scrapbox', drive: 'dr_twin', core: 'co_lead', front: 'wp_plow', top: 'wp_sledge', armor: { material: 'ar_alu', front: 5, sides: 4, rear: 2, top: 2 }, modules: [], brain: 'br_relay', plan: { stance: 'balanced', approach: 'direct', hazards: true } },
   },
 ];
 

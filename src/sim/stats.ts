@@ -22,24 +22,80 @@ export const OVERVOLT_HEAT = 5;
 /**
  * Per weapon damage trim, set by the balance runs (tools/tune.ts): each tier
  * is played out strategy against strategy, and the weapons that strategy
- * uses at that tier are trimmed until it wins about half its fights. For
- * flippers and lifters the trim also scales the throw (by its square root).
+ * uses at that tier are trimmed until it wins about half its fights. Trims
+ * never undo a line's progression: up every line each tier stays stronger
+ * than the last (see weaponStrength). For flippers and lifters the trim also
+ * scales the throw (by its square root).
  */
 export const TUNE: Record<string, number> = {
-  wp_drum: 1.07, wp_twindrum: 0.84, wp_megadrum: 0.71,
-  wp_bar: 0.91, wp_tribar: 1.13, wp_undercutter: 1.23,
-  wp_disc: 0.74, wp_egg: 1.09, wp_megadisc: 0.52,
-  wp_ring: 1.94, wp_halo: 1.89,
-  wp_springflip: 2.97, wp_pneuflip: 1.43, wp_megaflip: 0.74, wp_launcher: 0.64,
-  wp_lifter: 5, wp_clamp: 0.55, wp_hydrofork: 0.32,
-  wp_sledge: 0.89, wp_pickaxe: 0.66, wp_thwack: 0.68, wp_pulverizer: 0.51, wp_titanhammer: 0.68,
-  wp_jaw: 0.78, wp_megajaw: 1.15,
-  wp_buzzsaw: 1.21, wp_twinsaw: 2.74, wp_armsaw: 0.68,
-  wp_plow: 1.3, wp_forks: 4.31, wp_plough: 2.65,
-  wp_spikes: 3.81, wp_lance: 3.49, wp_ramhead: 5, wp_battering: 2.42,
-  wp_flame: 0.28, wp_inferno: 0.25,
+  wp_drum: 1.221, wp_twindrum: 1.302, wp_shreddrum: 1.209, wp_megadrum: 1.3956, wp_tungdrum: 1.2843,
+  wp_bar: 1.306, wp_flatbar: 1.231, wp_tribar: 1.4309, wp_undercutter: 1.321, wp_reaper: 1.6668,
+  wp_disc: 1.074, wp_egg: 0.986, wp_shatter: 0.996, wp_megadisc: 0.914,
+  wp_ring: 2.078, wp_cyclone: 2.09, wp_halo: 2.69,
+  wp_springflip: 1.2337, wp_pneuflip: 1.182, wp_ramflip: 1.1242, wp_megaflip: 1.065, wp_launcher: 1.421,
+  wp_lifter: 1.3838, wp_clamp: 1.3192, wp_hydrofork: 1.249, wp_forklift: 1.653,
+  wp_sledge: 0.734, wp_pickaxe: 0.916, wp_thwack: 0.884, wp_pulverizer: 0.82, wp_titanhammer: 1.0509,
+  wp_jaw: 1.087, wp_vise: 1.039, wp_megajaw: 1.4799, wp_guillotine: 1.369,
+  wp_buzzsaw: 0.919, wp_ripsaw: 1.1789, wp_chainsaw: 1.0901, wp_armsaw: 1.005, wp_diamondsaw: 1.3135,
+  wp_twinsaw: 1.2,
+  wp_plow: 1.049, wp_forks: 1.169, wp_dozer: 1.4828, wp_plough: 1.3612, wp_aegis: 1.257,
+  wp_spikes: 1.947, wp_spikeplate: 1.873, wp_lance: 1.854, wp_ramhead: 2.3798, wp_battering: 2.2952,
+  wp_flame: 0.1049, wp_torch: 0.1327, wp_inferno: 0.1223, wp_dragon: 0.149,
 };
 export const trimOf = (w: WeaponDef) => TUNE[w.id] ?? 1;
+
+/** The upgrade line a weapon belongs to: hammers and axes share one, saws split by mount. */
+export function lineOf(w: WeaponDef): string {
+  if (w.type === 'hammer' || w.type === 'axe') return 'overhead';
+  if (w.type === 'saw') return w.mount === 'top' ? 'saw' : 'frontsaw';
+  return w.type;
+}
+
+/**
+ * What a step up a line buys, in one number, trim included: energy per bite,
+ * damage per strike, damage per second, heat per second, ram force, or the
+ * throw. Every line must climb with each tier (tools/tune.ts keeps the trims
+ * from undoing that, and the tests check it).
+ */
+export function weaponStrength(w: WeaponDef, trim = trimOf(w)): number {
+  switch (w.type) {
+    case 'vspin':
+    case 'drum':
+    case 'hspin':
+    case 'ring':
+      return (w.energy ?? 0) * (w.bite ?? 0.5) * trim;
+    case 'flipper':
+    case 'lifter':
+      return (w.impulse ?? 0) * Math.sqrt(trim);
+    case 'hammer':
+    case 'axe':
+      return (w.damage ?? 0) * trim;
+    case 'crusher':
+      return ((w.damage ?? 0) + (w.dps ?? 0) * (w.hold ?? 0) * 0.7) * trim;
+    case 'saw':
+      return (w.dps ?? 0) * trim;
+    case 'flame':
+      return (w.heat ?? 0) * trim;
+    case 'wedge':
+    case 'ram':
+      return (w.ram ?? 0) * trim;
+  }
+}
+
+/** Least rise in strength per tier up a line, so every upgrade is worth buying: throws grow slower than hits. */
+export const lineStep = (w: WeaponDef) => (w.type === 'flipper' || w.type === 'lifter' ? 1.07 : 1.15);
+
+/**
+ * What a weapon delivers over time, before trims: strength per reload for
+ * strikers, carried for as long as lifters hold on. Up a line this grows at
+ * least as fast as the power draw, so a later part is better per kilowatt too.
+ */
+export function weaponValue(w: WeaponDef): number {
+  const s = weaponStrength(w, 1);
+  if (w.type === 'lifter') return (s * (w.hold ?? 1)) / (w.reload ?? 1);
+  if (w.reload) return s / w.reload;
+  return s;
+}
 export const MAX_POWER = 1.3;
 
 export type Levels = (partId: string) => number;
@@ -587,8 +643,8 @@ export function readout(d: BotDesign, levels: Levels = LEVEL_ONE): Readout {
   };
 }
 
-/** Damage of a 100 kg ram hitting at 3 m/s with ram factor 1 */
-export const RAM_K = 20;
+/** Damage of a 100 kg ram hitting at 3 m/s with ram factor 1, before its trim */
+export const RAM_K = 60;
 
 /** How hard a ram lands: grows faster than speed, scales with mass. */
 export const ramDamage = (mass: number, closing: number, ram: number) => ram * RAM_K * Math.pow(Math.min(5, Math.max(0, closing)) / 3, 1.5) * (mass / 100);

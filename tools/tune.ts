@@ -1,20 +1,23 @@
 // Trim each weapon until every strategy wins about half its fights, tier by
 // tier. Each round plays a round-robin per tier (one worker per tier, the
-// strategies that tier's parts can build), then nudges the trim of the weapons
+// strategies that tier's parts can build, in the arenas of that tier's
+// events), then nudges the trim of the weapons
 // each strategy used there. A weapon used in several tiers gets the average
-// nudge. Prints the TUNE table to paste into src/sim/stats.ts.
+// nudge. The trims are then held to their upgrade line: each part close to the
+// line's common trim, and each tier stronger than the one before, so tuning
+// never makes a later part worse. Prints the TUNE table for src/sim/stats.ts.
 //   node tools/tune.ts [tiers] [fightsPerPair] [rounds]
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { archetypesFor, makeBuild } from '../src/career/builds.ts';
 import { arenaOf } from '../src/data/arenas.ts';
-import { weaponOf } from '../src/data/parts.ts';
+import { arenasOfTier } from '../src/data/events.ts';
+import { WEAPONS, weaponOf } from '../src/data/parts.ts';
 import type { WeaponType } from '../src/data/types.ts';
 import { Driver } from '../src/sim/ai.ts';
 import { mulberry32 } from '../src/sim/rng.ts';
-import { TUNE, computeStats } from '../src/sim/stats.ts';
+import { TUNE, computeStats, lineOf, lineStep, weaponStrength } from '../src/sim/stats.ts';
 import { World, DT } from '../src/sim/world.ts';
 
-const ARENAS = ['garage', 'steelpit', 'crucible', 'worldarena', 'scrapyard', 'thunderdome'];
 /**
  * The weapons that make each strategy what it is: their trims answer for its
  * record (a wedge's trim sets how hard it crushes what it pins).
@@ -24,7 +27,7 @@ const KEY: Record<string, WeaponType[]> = {
   hammer: ['hammer', 'axe'], crusher: ['crusher'], rammer: ['ram'], wedge: ['wedge'], saw: ['saw'], firestarter: ['flipper', 'flame'],
 };
 /** trims outside these bounds mean the part's numbers need a look, not a bigger trim */
-const LIMITS = [0.25, 5];
+const LIMITS = [0.1, 5];
 
 export interface TierResult {
   tier: number;
@@ -37,6 +40,8 @@ export interface TierResult {
 
 export function playTier(tier: number, n: number, seedBase: number): TierResult {
   const archs = archetypesFor(tier);
+  // fought where the tier's events are
+  const arenas = arenasOfTier(tier);
   const score: Record<string, number> = {};
   const count: Record<string, number> = {};
   const used: Record<string, Record<string, number>> = {};
@@ -61,7 +66,7 @@ export function playTier(tier: number, n: number, seedBase: number): TierResult 
           }
         }
         const swap = k % 2 === 1;
-        const w = new World(computeStats(swap ? db : da), computeStats(swap ? da : db), arenaOf(ARENAS[(k + i + j) % ARENAS.length]), { seed });
+        const w = new World(computeStats(swap ? db : da), computeStats(swap ? da : db), arenaOf(arenas[(k + i + j) % arenas.length]), { seed });
         w.quiet = true;
         const d0 = new Driver(w, 0, seed);
         const d1 = new Driver(w, 1, seed + 5);
@@ -108,8 +113,7 @@ export function formatTune(): string {
   let fam = '';
   let line: string[] = [];
   for (const [id, v] of Object.entries(TUNE)) {
-    const t = weaponOf(id).type;
-    const f = t === 'axe' ? 'hammer' : t;
+    const f = lineOf(weaponOf(id));
     if (f !== fam && line.length) {
       lines.push('  ' + line.join(' '));
       line = [];
@@ -119,6 +123,57 @@ export function formatTune(): string {
   }
   if (line.length) lines.push('  ' + line.join(' '));
   return lines.join('\n');
+}
+
+/** How far one part's trim may stray from its line's common trim. */
+const BAND = 1.2;
+
+/**
+ * Hold the trims to their upgrade lines. Within a line each part stays within
+ * BAND of the line's geometric mean trim, then an isotonic fit (pool adjacent
+ * violators, in log space) makes strength climb at least lineStep per tier
+ * with the least change to the trims.
+ */
+export function holdLines() {
+  const byLine = new Map<string, typeof WEAPONS>();
+  for (const w of WEAPONS) {
+    const l = lineOf(w);
+    if (!byLine.has(l)) byLine.set(l, []);
+    byLine.get(l)!.push(w);
+  }
+  for (const parts of byLine.values()) {
+    parts.sort((a, b) => a.tier - b.tier);
+    const mean = Math.exp(parts.reduce((s, w) => s + Math.log(TUNE[w.id] ?? 1), 0) / parts.length);
+    for (const w of parts) TUNE[w.id] = Math.max(mean / BAND, Math.min(mean * BAND, TUNE[w.id] ?? 1));
+    // y_i = log strength less the climb it must make; fit y non-decreasing
+    let climb = 0;
+    const need: number[] = [];
+    const y = parts.map((w, i) => {
+      // a hair over the step, so rounding the trims cannot dip under it
+      if (i > 0) climb += Math.log(lineStep(w) + 0.004) * (w.tier - parts[i - 1].tier);
+      need.push(climb);
+      return Math.log(weaponStrength(w)) - climb;
+    });
+    const blocks: Array<{ v: number; n: number }> = [];
+    for (const v of y) {
+      blocks.push({ v, n: 1 });
+      while (blocks.length > 1 && blocks[blocks.length - 2].v > blocks[blocks.length - 1].v) {
+        const b = blocks.pop()!;
+        const a = blocks.pop()!;
+        blocks.push({ v: (a.v * a.n + b.v * b.n) / (a.n + b.n), n: a.n + b.n });
+      }
+    }
+    const fit: number[] = [];
+    for (const b of blocks) for (let k = 0; k < b.n; k++) fit.push(b.v);
+    parts.forEach((w, i) => {
+      // solve the trim that gives the fitted strength
+      const want = Math.exp(fit[i] + need[i]);
+      const at1 = weaponStrength(w, 1);
+      const sqrt = w.type === 'flipper' || w.type === 'lifter';
+      const trim = sqrt ? (want / at1) ** 2 : want / at1;
+      TUNE[w.id] = Math.round(Math.max(LIMITS[0], Math.min(LIMITS[1], trim)) * 10000) / 10000;
+    });
+  }
 }
 
 if (!isMainThread) {
@@ -147,8 +202,9 @@ if (!isMainThread) {
       }
     }
     for (const id of Object.keys(logSum)) {
-      TUNE[id] = Math.round(Math.max(LIMITS[0], Math.min(LIMITS[1], (TUNE[id] ?? 1) * Math.exp(logSum[id] / wSum[id]))) * 100) / 100;
+      TUNE[id] = Math.max(LIMITS[0], Math.min(LIMITS[1], (TUNE[id] ?? 1) * Math.exp(logSum[id] / wSum[id])));
     }
+    holdLines();
     console.log(formatTune());
   }
 }

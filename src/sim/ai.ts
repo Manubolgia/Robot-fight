@@ -122,9 +122,14 @@ export class Driver {
     return this.rebootT > 0;
   }
 
-  /** Share of its rated draw reaching the brain right now. */
+  /**
+   * Share of its rated draw reaching the brain right now. The core feeds the
+   * electronics last-cut: an overheat takes a fifth, not half, so it is a
+   * damaged core on top of the heat that browns a sharp brain out.
+   */
   private brainPower(): number {
-    return this.me.s.mind.p * this.world.powerScale(this.me);
+    const me = this.me;
+    return me.s.mind.p * this.world.coreFactor(me) * (me.overheated ? 0.8 : 1);
   }
 
   /** Re-read the brain at the power it is getting, and the plan it is following. */
@@ -371,12 +376,15 @@ export class Driver {
   private approachFirst(op: Bot, dist: number): boolean {
     const mind = this.me.s.mind;
     const ringOp = op.front?.w.def.type === 'ring';
-    if ((mind.plan.approach === 'flank' || mind.trait === 'hunter') && !ringOp && dist > 1.0 && dist < 5 && Math.abs(this.opFacing()) < 1.1 && this.flankT < 3) {
+    // a plan is carried out only as well as the brain can: a dull one cannot
+    // work round a flank, and runs out of patience on a counter
+    const sharp = this.skill.aim;
+    if ((mind.plan.approach === 'flank' || mind.trait === 'hunter') && sharp >= 0.55 && !ringOp && dist > 1.0 && dist < 5 && Math.abs(this.opFacing()) < 1.1 && this.flankT < 3) {
       this.mode = 'flank';
       this.flank(op, clamp(dist * 0.8, 1.2, 2));
       return true;
     }
-    const patience = mind.plan.approach === 'counter' ? 5 : mind.trait === 'adaptive' ? 2.5 : 0;
+    const patience = (mind.plan.approach === 'counter' ? 5 : mind.trait === 'adaptive' ? 2.5 : 0) * clamp((sharp - 0.3) / 0.5, 0, 1);
     if (patience > 0 && dist > 1.5 && this.stalkT < patience && !this.opCommitted()) {
       this.mode = 'stalk';
       this.stalk(op);

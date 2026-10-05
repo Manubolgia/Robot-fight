@@ -635,7 +635,7 @@ export function PowerTab({ c, bot }: { c: Career; bot: BotDesign }) {
   return (
     <>
       <Tip id="power">
-        Your core makes a fixed amount of power. Give a system less and it gets weaker; push it past 100% (overvolt) and it gets stronger but builds heat. Every part needs a minimum (the red mark): below it a weapon is switched off, and the drive and the brain will not go lower. Overheat and everything runs at half power, which can drop a brain kept at its minimum into a reboot.
+        Your core makes a fixed amount of power. Give a system less and it gets weaker; push it past 100% (overvolt) and it gets stronger but builds heat. Every part needs a minimum (the red mark): below it a weapon is switched off, and the drive and the brain will not go lower. Overheat and the drive and weapons run at half power; the brain keeps four fifths, so one kept right at its minimum can drop into a reboot.
       </Tip>
       <div class="card" style={{ marginBottom: '10px' }}>
         <div class="row">
@@ -761,7 +761,7 @@ export function PlanTab({ bot }: { bot: BotDesign }) {
   return (
     <>
       <Tip id="plan">
-        You do not drive in the arena: the brain does, following this plan. Better brains carry it out better.
+        You do not drive in the arena: the brain does, following this plan. Better brains carry it out better: a dull one cannot work round a flank and soon loses patience on a counter.
       </Tip>
       <div class="card col" style={{ gap: '10px' }}>
         <div class="label">Stance</div>

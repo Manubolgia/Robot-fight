@@ -236,7 +236,7 @@ export function HowTo() {
         {sec(
           'Weight and power',
           <>
-            Every robot must weigh <b>100 kg or less</b>. Heavier parts are stronger, but heavy robots accelerate and turn slowly, and every plate of armour costs weight. Your <b>power core</b> makes a fixed number of kilowatts that the drive, the weapons, the modules and the brain share: in the garage's Power tab you choose who gets what. Less power makes a system weaker; <b>overvolting</b> past 100% makes it stronger but builds heat, and an overheated robot runs at half power. Every part also needs a <b>minimum</b>: below it a weapon is off, and a brain that drops under its minimum mid-fight (core damage, overheating) reboots, frozen for a moment.
+            Every robot must weigh <b>100 kg or less</b>. Heavier parts are stronger, but heavy robots accelerate and turn slowly, and every plate of armour costs weight. Your <b>power core</b> makes a fixed number of kilowatts that the drive, the weapons, the modules and the brain share: in the garage's Power tab you choose who gets what. Less power makes a system weaker; <b>overvolting</b> past 100% makes it stronger but builds heat, and an overheated robot runs its drive and weapons at half power. Every part also needs a <b>minimum</b>: below it a weapon is off, and a brain that drops under its minimum mid-fight (a damaged core, an overheat on top) reboots, frozen for a moment. Later parts are better, but they draw more and need a bigger minimum: fit the best of everything and something else, usually the armour, has to give.
           </>,
         )}
         {sec(
